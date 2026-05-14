@@ -101,6 +101,22 @@ macro_rules! invoke_commands_with_extras {
         // Download
         core::downloads::commands::download_files,
         core::downloads::commands::cancel_download_task,
+        // Voice servers (Whisper STT + Kokoro TTS)
+        core::voice::commands::voice_start_whisper_server,
+        core::voice::commands::voice_stop_whisper_server,
+        core::voice::commands::voice_ping_server,
+        core::voice::commands::voice_start_kokoro_server,
+        core::voice::commands::voice_stop_kokoro_server,
+        core::voice::commands::voice_start_qwen3tts_server,
+        core::voice::commands::voice_stop_qwen3tts_server,
+        core::voice::commands::voice_download_qwen3tts_model,
+        core::voice::commands::voice_remove_qwen3tts_model,
+        core::voice::commands::voice_check_dependencies,
+        core::voice::commands::voice_extract_whisper_zip,
+        // Voice HTTP proxy (audio data goes through Rust, not the webview)
+        core::voice::commands::voice_transcribe,
+        core::voice::commands::voice_synthesize_kokoro,
+        core::voice::commands::voice_synthesize_qwen3tts,
         $(
             $extra,
         )*
@@ -183,6 +199,7 @@ pub fn run() {
             mcp_server_pids: Arc::new(Mutex::new(HashMap::new())),
             provider_configs: Arc::new(Mutex::new(HashMap::new())),
             mcp_reconnect_notify: Arc::new(tokio::sync::Notify::new()),
+            voice_processes: Default::default(),
         })
         .setup(|app| {
             app.handle().plugin(

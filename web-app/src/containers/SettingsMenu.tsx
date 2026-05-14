@@ -14,6 +14,7 @@ import {
   IconTopologyStar3,
   IconLock,
   IconCpu,
+  IconMicrophone,
 } from '@tabler/icons-react'
 import { useMatches, useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
@@ -132,6 +133,11 @@ const SettingsMenu = () => {
       icon: IconCpu,
     },
     { title: 'common:privacy', route: route.settings.privacy, icon: IconLock },
+    {
+      title: 'common:voice',
+      route: route.settings.voice,
+      icon: IconMicrophone,
+    },
   ]
 
   const integrationSettings = [

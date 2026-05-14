@@ -63,6 +63,8 @@ pub struct AppState {
     pub provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
     /// Wakes up MCP monitors to trigger an immediate health check + reconnect
     pub mcp_reconnect_notify: Arc<Notify>,
+    /// Child processes for local voice servers (Whisper STT + Kokoro TTS)
+    pub voice_processes: Arc<Mutex<crate::core::voice::models::VoiceProcesses>>,
 }
 
 impl Default for AppState {
@@ -81,6 +83,7 @@ impl Default for AppState {
             mcp_server_pids: Default::default(),
             provider_configs: Default::default(),
             mcp_reconnect_notify: Arc::new(Notify::new()),
+            voice_processes: Default::default(),
         }
     }
 }

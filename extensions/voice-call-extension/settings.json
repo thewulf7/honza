@@ -1,0 +1,107 @@
+[
+  {
+    "key": "stt_model_size",
+    "title": "STT Model Size",
+    "description": "Whisper model size for speech-to-text. Larger = more accurate but slower.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "tiny",
+      "options": [
+        { "name": "Tiny (~75 MB, fastest)", "value": "tiny" },
+        { "name": "Base (~142 MB)", "value": "base" },
+        { "name": "Small (~466 MB, recommended)", "value": "small" },
+        { "name": "Medium (~1.5 GB)", "value": "medium" }
+      ]
+    }
+  },
+  {
+    "key": "tts_backend",
+    "title": "TTS Backend",
+    "description": "Which text-to-speech engine to use. Kokoro runs as a pre-built binary; Qwen3-TTS requires Python + qwen-tts package.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "kokoro",
+      "options": [
+        { "name": "Kokoro (pre-built binary, recommended)", "value": "kokoro" },
+        { "name": "Qwen3-TTS (Python, GPU optional)", "value": "qwen3tts" }
+      ]
+    }
+  },
+  {
+    "key": "tts_speed",
+    "title": "Kokoro Speech Speed",
+    "description": "Speaking rate multiplier for Kokoro TTS output.",
+    "controllerType": "input",
+    "controllerProps": { "value": 1.0, "type": "number", "min": 0.5, "max": 2.0, "step": 0.1, "textAlign": "right" }
+  },
+  {
+    "key": "tts_voice",
+    "title": "Kokoro Voice",
+    "description": "Kokoro voice to use when Kokoro is selected as the TTS backend.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "af_heart",
+      "options": [
+        { "name": "Heart (Female, EN)", "value": "af_heart" },
+        { "name": "Bella (Female, EN)", "value": "af_bella" },
+        { "name": "Adam (Male, EN)", "value": "am_adam" },
+        { "name": "Michael (Male, EN)", "value": "am_michael" }
+      ]
+    }
+  },
+  {
+    "key": "qwen3tts_model",
+    "title": "Qwen3-TTS Model",
+    "description": "Which Qwen3-TTS model size to use. 0.6B is faster; 1.7B has higher quality.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+      "options": [
+        { "name": "0.6B CustomVoice (faster)", "value": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice" },
+        { "name": "1.7B CustomVoice (higher quality)", "value": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" }
+      ]
+    }
+  },
+  {
+    "key": "qwen3tts_speaker",
+    "title": "Qwen3-TTS Speaker",
+    "description": "Speaker voice when using Qwen3-TTS.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "Ryan",
+      "options": [
+        { "name": "Ryan (Male, EN)", "value": "Ryan" },
+        { "name": "Aiden (Male, EN)", "value": "Aiden" },
+        { "name": "Ono_Anna (Female, JA)", "value": "Ono_Anna" },
+        { "name": "Sohee (Female, KO)", "value": "Sohee" },
+        { "name": "Vivian (Female, ZH)", "value": "Vivian" },
+        { "name": "Serena (Female, ZH)", "value": "Serena" },
+        { "name": "Dylan (Male, ZH-Beijing)", "value": "Dylan" },
+        { "name": "Eric (Male, ZH-Sichuan)", "value": "Eric" },
+        { "name": "Uncle_Fu (Male, ZH)", "value": "Uncle_Fu" }
+      ]
+    }
+  },
+  {
+    "key": "qwen3tts_language",
+    "title": "Qwen3-TTS Language",
+    "description": "Language hint for Qwen3-TTS. Use Auto for automatic detection.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "Auto",
+      "options": [
+        { "name": "Auto (detect)", "value": "Auto" },
+        { "name": "English", "value": "English" },
+        { "name": "Chinese", "value": "Chinese" },
+        { "name": "Japanese", "value": "Japanese" },
+        { "name": "Korean", "value": "Korean" },
+        { "name": "German", "value": "German" },
+        { "name": "French", "value": "French" },
+        { "name": "Russian", "value": "Russian" },
+        { "name": "Portuguese", "value": "Portuguese" },
+        { "name": "Spanish", "value": "Spanish" },
+        { "name": "Italian", "value": "Italian" }
+      ]
+    }
+  }
+]

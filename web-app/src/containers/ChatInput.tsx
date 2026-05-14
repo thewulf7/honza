@@ -18,7 +18,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ArrowRight, PlusIcon } from 'lucide-react'
+import { ArrowRight, PlusIcon, Phone } from 'lucide-react'
 import {
   IconPhoto,
   IconAtom,
@@ -101,6 +101,7 @@ type ChatInputProps = {
   ) => void
   onStop?: () => void
   chatStatus?: ChatStatus
+  onStartVoiceCall?: () => void
 }
 
 const ChatInput = memo(function ChatInput({
@@ -110,6 +111,7 @@ const ChatInput = memo(function ChatInput({
   onSubmit,
   onStop,
   chatStatus,
+  onStartVoiceCall,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isFocused, setIsFocused] = useState(false)
@@ -1914,6 +1916,25 @@ const ChatInput = memo(function ChatInput({
                           ? 'Agent mode active'
                           : 'Enable agent mode'}
                       </p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {/* Voice Call button */}
+                {onStartVoiceCall && selectedModel && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={onStartVoiceCall}
+                        title="Start voice call"
+                      >
+                        <Phone size={16} className="text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Voice Call</p>
                     </TooltipContent>
                   </Tooltip>
                 )}

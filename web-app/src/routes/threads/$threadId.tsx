@@ -56,6 +56,8 @@ import { useAgentMode } from '@/hooks/useAgentMode'
 import { useMessageQueue } from '@/stores/message-queue-store'
 import { generateThreadTitle } from '@/lib/thread-title-summarizer'
 import { useAutoScroll } from '@/hooks/useAutoScroll'
+import { VoiceCallOverlay } from '@/containers/VoiceCallOverlay'
+import { useVoiceCall } from '@/hooks/useVoiceCall'
 
 const CHAT_STATUS = {
   STREAMING: 'streaming',
@@ -737,6 +739,13 @@ function ThreadDetail() {
     [sendMessage, threadId, addMessage]
   )
 
+  // Voice call orchestration
+  const { startCall: startVoiceCall, endCall: endVoiceCall, toggleMute: toggleVoiceMute } = useVoiceCall({
+    sendMessage: (opts) => sendMessage({ parts: opts.parts as Parameters<typeof sendMessage>[0]['parts'], id: undefined }),
+    messages: chatMessages,
+    isStreaming: status === 'streaming',
+  })
+
   // Check for and send initial message from sessionStorage
   const initialMessageSentRef = useRef(false)
 
@@ -1183,9 +1192,12 @@ function ThreadDetail() {
             onSubmit={handleSubmit}
             onStop={stop}
             chatStatus={status}
+            onStartVoiceCall={startVoiceCall}
           />
         </div>
       </div>
+      {/* Voice call full-screen overlay — mounts always, hidden when status=idle */}
+      <VoiceCallOverlay endCall={endVoiceCall} toggleMute={toggleVoiceMute} />
     </div>
   )
 }

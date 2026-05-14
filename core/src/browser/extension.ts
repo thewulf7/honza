@@ -13,6 +13,7 @@ export enum ExtensionTypeEnum {
   Hardware = 'hardware',
   RAG = 'rag',
   VectorDB = 'vectorDB',
+  Voice = 'voice',
 }
 
 export interface ExtensionType {
