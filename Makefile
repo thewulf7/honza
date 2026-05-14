@@ -9,6 +9,8 @@ REPORT_PORTAL_DESCRIPTION ?= "Jan App report"
 # Detect OS
 ifeq ($(OS),Windows_NT)
     DETECTED_OS := Windows
+	SHELL = cmd.exe
+    .SHELLFLAGS = /C
 else
     DETECTED_OS := $(shell uname -s)
 endif

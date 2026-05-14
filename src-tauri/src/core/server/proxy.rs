@@ -1220,14 +1220,13 @@ async fn resolve_upstream_for_model(
 }
 
 async fn first_available_local_model_id(
-    sessions: Arc<Mutex<HashMap<i32, LLamaBackendSession>>>,
+    llama_state: Arc<LlamacppState>,
+    client: &Client,
     mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
 ) -> Option<String> {
-    let sessions_guard = sessions.lock().await;
-    if let Some(session) = sessions_guard.values().next() {
-        return Some(session.info.model_id.clone());
+    if let Some(model) = router_first_model(&llama_state, client).await {
+        return Some(model);
     }
-    drop(sessions_guard);
 
     let mlx_guard = mlx_sessions.lock().await;
     mlx_guard.values().next().map(|s| s.info.model_id.clone())
@@ -1248,14 +1247,15 @@ pub(crate) fn choose_proxy_model_id(
 async fn resolve_proxy_model_id(
     requested_model: Option<&str>,
     provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
-    sessions: Arc<Mutex<HashMap<i32, LLamaBackendSession>>>,
+    llama_state: Arc<LlamacppState>,
+    client: &Client,
     mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
 ) -> Option<String> {
     let requested_model_available = if let Some(model_id) = requested_model {
         resolve_upstream_for_model(
             model_id,
             provider_configs.clone(),
-            sessions.clone(),
+            llama_state.clone(),
             mlx_sessions.clone(),
         )
         .await
@@ -1264,7 +1264,7 @@ async fn resolve_proxy_model_id(
         false
     };
 
-    let fallback_model = first_available_local_model_id(sessions, mlx_sessions).await;
+    let fallback_model = first_available_local_model_id(llama_state, client, mlx_sessions).await;
     let resolved_model = choose_proxy_model_id(
         requested_model,
         requested_model_available,
@@ -1285,7 +1285,8 @@ async fn resolve_proxy_model_id(
 async fn rewrite_request_model_to_available_fallback(
     json_body: &mut serde_json::Value,
     provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
-    sessions: Arc<Mutex<HashMap<i32, LLamaBackendSession>>>,
+    llama_state: Arc<LlamacppState>,
+    client: &Client,
     mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
 ) -> Result<bool, &'static str> {
     let Some(requested_model_id) = json_body.get("model").and_then(|v| v.as_str()) else {
@@ -1295,7 +1296,8 @@ async fn rewrite_request_model_to_available_fallback(
     let resolved_model_id = resolve_proxy_model_id(
         Some(requested_model_id),
         provider_configs,
-        sessions,
+        llama_state,
+        client,
         mlx_sessions,
     )
     .await
@@ -2544,7 +2546,8 @@ async fn proxy_request(
                         let model_was_rewritten = match rewrite_request_model_to_available_fallback(
                             &mut json_body,
                             provider_configs.clone(),
-                            sessions.clone(),
+                            llama_state.clone(),
+                            &client,
                             mlx_sessions.clone(),
                         )
                         .await {
