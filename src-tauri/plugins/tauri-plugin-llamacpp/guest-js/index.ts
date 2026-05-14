@@ -33,6 +33,12 @@ function asI32(v: any, defaultValue = 0): number {
   return n
 }
 
+function asU32(v: any, defaultValue = 0): number {
+  const n = Math.trunc(asNumber(v, defaultValue))
+  if (n <= 0) return 0
+  return Math.min(n, I32_MAX)
+}
+
 function asBool(v: any, defaultValue = false): boolean {
   if (v === '' || v === null || v === undefined) return defaultValue
   return v === true || v === 'true' || v === 1 || v === '1'
@@ -103,6 +109,11 @@ export function normalizeLlamacppConfig(config: any): LlamacppConfig {
     cache_reuse: asI32(config.cache_reuse, 0),
     swa_full: asBool(config.swa_full),
     keep: asI32(config.keep, 0),
+
+    draft_model_path: asString(config.draft_model_path, ''),
+    spec_type: asString(config.spec_type, ''),
+    draft_max: asU32(config.draft_max, 0),
+    draft_min: asU32(config.draft_min, 0),
   }
 }
 
