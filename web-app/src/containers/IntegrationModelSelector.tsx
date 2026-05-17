@@ -16,6 +16,7 @@ type SelectableModel = Model & {
   isLocal: boolean
   hasApiKey: boolean
   provider: ModelProvider
+  size?: number
 }
 
 export default function IntegrationModelSelector({
