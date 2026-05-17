@@ -168,7 +168,7 @@ function CodexIntegration() {
               onSelect={setModel}
               placeholder="Select Model"
               allowEmptyOption
-              filterModel={(model) => model.isLocal}
+              filterModel={(model) => model.isLocal === true}
               showSize
             />
           }

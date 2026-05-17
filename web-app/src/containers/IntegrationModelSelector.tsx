@@ -13,7 +13,7 @@ import { cn, formatBytes, getModelDisplayName, isLocalProvider } from '@/lib/uti
 
 type SelectableModel = Model & {
   providerName: string
-  isLocal: boolean
+  isLocal: boolean | undefined
   hasApiKey: boolean
   provider: ModelProvider
   size?: number
