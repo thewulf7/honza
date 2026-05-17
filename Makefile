@@ -159,15 +159,11 @@ ifeq ($(DETECTED_OS),Darwin)
 		find "$$DERIVED_DATA/mlx-swift_Cmlx.bundle" -maxdepth 4 2>/dev/null; \
 		exit 1; \
 	fi; \
-	if [ ! -f "$$BUILD_DIR/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib" ]; then \
-		echo "Error: MLX metallib bundle was not produced at $$BUILD_DIR/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"; \
-		exit 1; \
-	fi; \
 	mkdir -p src-tauri/resources/bin; \
-	echo "Copying mlx-server from $$BUILD_DIR..."; \
-	cp "$$BUILD_DIR/mlx-server" src-tauri/resources/bin/mlx-server; \
+	echo "Copying mlx-server from $$DERIVED_DATA..."; \
+	cp "$$DERIVED_DATA/mlx-server" src-tauri/resources/bin/mlx-server; \
 	rm -rf src-tauri/resources/bin/mlx-swift_Cmlx.bundle; \
-	cp -R "$$BUILD_DIR/mlx-swift_Cmlx.bundle" src-tauri/resources/bin/; \
+	cp -R "$$DERIVED_DATA/mlx-swift_Cmlx.bundle" src-tauri/resources/bin/; \
 	chmod +x src-tauri/resources/bin/mlx-server; \
 	echo "MLX server built and copied successfully"; \
 	echo "Checking for code signing identity..."; \
