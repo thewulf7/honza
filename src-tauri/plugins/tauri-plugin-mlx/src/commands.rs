@@ -19,6 +19,46 @@ use crate::state::{MlxBackendSession, MlxState, SessionInfo};
 #[cfg(unix)]
 use crate::process::graceful_terminate_process;
 
+fn validate_mlx_runtime_assets(bin_path: &Path) -> ServerResult<()> {
+    let Some(bin_dir) = bin_path.parent() else {
+        return Err(MlxError::new(
+            ErrorCode::BinaryNotFound,
+            format!("MLX server binary path has no parent directory: {}", bin_path.display()),
+            None,
+        )
+        .into());
+    };
+
+    let bundle_path = bin_dir.join("mlx-swift_Cmlx.bundle");
+    let metallib_path = bundle_path.join("Contents/Resources/default.metallib");
+
+    if !bundle_path.exists() {
+        return Err(MlxError::new(
+            ErrorCode::BinaryNotFound,
+            "MLX runtime assets are missing.".into(),
+            Some(format!(
+                "Expected MLX bundle at: {}",
+                bundle_path.display()
+            )),
+        )
+        .into());
+    }
+
+    if !metallib_path.is_file() {
+        return Err(MlxError::new(
+            ErrorCode::BinaryNotFound,
+            "MLX Metal library is missing.".into(),
+            Some(format!(
+                "Expected metallib at: {}",
+                metallib_path.display()
+            )),
+        )
+        .into());
+    }
+
+    Ok(())
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct UnloadResult {
     success: bool,
@@ -61,6 +101,8 @@ pub async fn load_mlx_model_impl(
         )
         .into());
     }
+
+    validate_mlx_runtime_assets(&bin_path)?;
 
     // Validate model path
     let model_path_pb = PathBuf::from(&model_path);

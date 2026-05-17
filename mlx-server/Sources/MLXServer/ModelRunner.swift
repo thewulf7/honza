@@ -2,6 +2,7 @@ import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
+import MLXLMTokenizers
 import MLXVLM
 
 /// Manages loading and running inference with MLX models
@@ -42,7 +43,7 @@ actor ModelRunner {
         }
 
         if let dir = modelDir {
-            self.model = try await loadModel(directory: dir)
+            self.model = try await loadModel(from: dir)
         }
     }
 
