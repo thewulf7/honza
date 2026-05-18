@@ -13,6 +13,11 @@
     "log:default",
     "core:webview:allow-create-webview-window",
     "core:webview:allow-get-all-webviews",
-    "core:window:allow-set-focus"
+    "core:window:allow-set-focus",
+    "hardware:allow-get-system-info",
+    "llamacpp:allow-get-backend-exe-path",
+    "llamacpp:allow-get-supported-features",
+    "llamacpp:allow-generate-api-key",
+    "llamacpp:allow-read-gguf-metadata"
   ]
 }
