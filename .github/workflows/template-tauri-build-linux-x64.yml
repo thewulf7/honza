@@ -46,6 +46,10 @@ on:
         required: false
       JAN_SIGNING_KEY:
         required: false
+      POSTHOG_KEY:
+        required: false
+      POSTHOG_HOST:
+        required: false
     outputs:
       DEB_SIG:
         value: ${{ jobs.build-linux-x64.outputs.DEB_SIG }}
@@ -190,6 +194,12 @@ jobs:
           --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
           --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
           "$APP_IMAGE"
+
+          DEB_FILE=./src-tauri/target/release/bundle/deb/$(ls ./src-tauri/target/release/bundle/deb/ | grep -E '\.deb$' | head -1)
+          yarn tauri signer sign \
+          --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+          --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+          "$DEB_FILE"
 
         env:
           RELEASE_CHANNEL: '${{ inputs.channel }}'

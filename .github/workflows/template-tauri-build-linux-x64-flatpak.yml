@@ -42,6 +42,10 @@ on:
         required: false
       JAN_SIGNING_KEY:
         required: false
+      POSTHOG_KEY:
+        required: false
+      POSTHOG_HOST:
+        required: false
 jobs:
   build-linux-x64:
     runs-on: ubuntu-22.04
@@ -163,6 +167,12 @@ jobs:
       - name: Build app
         run: |
           make build
+
+          DEB_FILE=./src-tauri/target/release/bundle/deb/$(ls ./src-tauri/target/release/bundle/deb/ | grep -E '\.deb$' | head -1)
+          yarn tauri signer sign \
+          --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+          --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+          "$DEB_FILE"
 
         env:
           RELEASE_CHANNEL: '${{ inputs.channel }}'

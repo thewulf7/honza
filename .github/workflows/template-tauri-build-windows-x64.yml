@@ -51,6 +51,10 @@ on:
         required: false
       JAN_SIGNING_KEY:
         required: false
+      POSTHOG_KEY:
+        required: false
+      POSTHOG_HOST:
+        required: false
     outputs:
       WIN_SIG:
         value: ${{ jobs.build-windows-x64.outputs.WIN_SIG }}
