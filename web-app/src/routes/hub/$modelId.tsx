@@ -10,6 +10,12 @@ import {
   IconDownload,
   IconClock,
   IconFileCode,
+  IconRocket,
+  IconBrandSpeedtest,
+  IconBriefcase,
+  IconStar,
+  IconCpu,
+  IconDevicesPc,
 } from '@tabler/icons-react'
 import { route } from '@/constants/routes'
 import { useModelSources } from '@/hooks/useModelSources'
@@ -19,7 +25,8 @@ import { useEffect, useMemo, useCallback, useState } from 'react'
 import { useModelProvider } from '@/hooks/useModelProvider'
 import { useDownloadStore } from '@/hooks/useDownloadStore'
 import { useServiceHub } from '@/hooks/useServiceHub'
-import type { CatalogModel } from '@/services/models/types'
+import type { DownloadProgressProps } from '@/hooks/useDownloadStore'
+import type { CatalogModel, ModelQuant } from '@/services/models/types'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -27,6 +34,24 @@ import { useGeneralSetting } from '@/hooks/useGeneralSetting'
 import { ModelInfoHoverCard } from '@/containers/ModelInfoHoverCard'
 import { DEFAULT_MODEL_QUANTIZATIONS } from '@/constants/models'
 import { useTranslation } from '@/i18n'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useShallow } from 'zustand/react/shallow'
+import { useModelScore } from '@/hooks/useModelScores'
+import {
+  FIT_LEVEL_BADGE_VARIANTS,
+  FIT_LEVEL_TRANSLATION_KEYS,
+  getVariantDisplayName,
+  isBestQuantVariant,
+} from '../../utils/scoreUtils'
+
+const RUN_MODE_TRANSLATION_KEYS: Record<string, string> = {
+  'GPU': 'hub:scoreSummary.runModes.gpu',
+  'CPU Offload': 'hub:scoreSummary.runModes.cpuOffload',
+  'CPU Only': 'hub:scoreSummary.runModes.cpuOnly',
+  'MoE Offload': 'hub:scoreSummary.runModes.moeOffload',
+  'Tensor Parallel': 'hub:scoreSummary.runModes.tensorParallel',
+}
 
 type SearchParams = {
   repo: string
@@ -44,7 +69,14 @@ function HubModelDetailContent() {
   const { modelId } = useParams({ from: Route.id })
   const navigate = useNavigate()
   const { huggingfaceToken } = useGeneralSetting()
-  const { sources, fetchSources } = useModelSources()
+  const { fetchSources, sourceModel } = useModelSources(
+    useShallow((state: ReturnType<typeof useModelSources.getState>) => ({
+      fetchSources: state.fetchSources,
+      sourceModel: state.sources.find(
+        (model: CatalogModel) => model.model_name === modelId
+      ),
+    }))
+  )
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const search = useSearch({ from: Route.id as any })
   const { getProviderByName } = useModelProvider()
@@ -53,12 +85,46 @@ function HubModelDetailContent() {
     useDownloadStore()
   const serviceHub = useServiceHub()
   const [repoData, setRepoData] = useState<CatalogModel | undefined>()
+  const { modelScore, fetchModelScore } = useModelScore(
+    useShallow((state) => ({
+      modelScore: state.getScore(modelId),
+      fetchModelScore: state.fetchModelScore,
+    }))
+  )
 
+  const breakdown = modelScore?.breakdown
+  const translatedBreakdown = breakdown
+    ? {
+        ...breakdown,
+        fit_level: breakdown.fit_level
+          ? t(
+              FIT_LEVEL_TRANSLATION_KEYS[breakdown.fit_level] ??
+                breakdown.fit_level
+            )
+          : breakdown.fit_level,
+        run_mode: breakdown.run_mode
+          ? t(
+              RUN_MODE_TRANSLATION_KEYS[breakdown.run_mode] ??
+                breakdown.run_mode
+            )
+          : breakdown.run_mode,
+      }
+    : undefined
+  const isScoreReady =
+    modelScore?.status === 'ready' &&
+    typeof modelScore.overall === 'number' &&
+    translatedBreakdown !== undefined
+  const isScoreLoading = !modelScore || modelScore.status === 'loading'
+  
   // State for README content
   const [readmeContent, setReadmeContent] = useState<string>('')
   const [isLoadingReadme, setIsLoadingReadme] = useState(false)
 
-
+  // State for model support status
+  const [modelSupportStatus, setModelSupportStatus] = useState<
+    Record<string, 'RED' | 'YELLOW' | 'GREEN' | 'LOADING' | 'GREY'>
+  >({})
+  
   useEffect(() => {
     fetchSources()
   }, [fetchSources])
@@ -78,10 +144,7 @@ function HubModelDetailContent() {
   useEffect(() => {
     fetchRepo()
   }, [modelId, fetchRepo])
-  // Find the model data from sources
-  const modelData = useMemo(() => {
-    return sources.find((model) => model.model_name === modelId) ?? repoData
-  }, [sources, modelId, repoData])
+  const modelData = sourceModel ?? repoData
 
   // Download processes
   const downloadProcesses = useMemo(
@@ -134,6 +197,43 @@ function HubModelDetailContent() {
     }
   }
 
+  // Check model support function
+  const checkModelSupport = useCallback(
+    async (variant: ModelQuant) => {
+      const modelKey = variant.model_id
+
+      // Don't check again if already checking or checked
+      if (modelSupportStatus[modelKey]) {
+        return
+      }
+
+      // Set loading state
+      setModelSupportStatus((prev) => ({
+        ...prev,
+        [modelKey]: 'LOADING',
+      }))
+
+      try {
+        // Use the HuggingFace path for the model
+        const modelPath = variant.path
+        const supported = await serviceHub
+          .models()
+          .isModelSupported(modelPath, 8192)
+        setModelSupportStatus((prev) => ({
+          ...prev,
+          [modelKey]: supported,
+        }))
+      } catch (error) {
+        console.error('Error checking model support:', error)
+        setModelSupportStatus((prev) => ({
+          ...prev,
+          [modelKey]: 'RED',
+        }))
+      }
+    },
+    [modelSupportStatus, serviceHub]
+  )
+
   // Extract tags from quants (model variants)
   const tags = useMemo(() => {
     if (!modelData?.quants) return []
@@ -141,7 +241,7 @@ function HubModelDetailContent() {
     const sizePattern = /(\d+b)/i
     const uniqueSizes = new Set<string>()
 
-    modelData.quants.forEach((quant) => {
+    modelData.quants.forEach((quant: ModelQuant) => {
       const match = quant.model_id.match(sizePattern)
       if (match) {
         uniqueSizes.add(match[1].toLowerCase())
@@ -154,6 +254,12 @@ function HubModelDetailContent() {
       return numA - numB
     })
   }, [modelData])
+
+  useEffect(() => {
+    if (!modelData) return
+
+    void fetchModelScore(modelData)
+  }, [fetchModelScore, modelData])
 
   // Fetch README content when modelData.readme is available
   useEffect(() => {
@@ -295,6 +401,100 @@ function HubModelDetailContent() {
               )}
             </div>
 
+             {/* Fit Score Section */}
+            <div className="mb-8">
+              <div className="flex items-center -center gap-2 mb-4">
+                <IconRocket size={20} className="text-muted-foreground" />
+                <h2 className="text-lg font-semibold text-foreground">
+                  {t('hub:scoreSummary.fitScore')}
+                </h2>
+                {isScoreReady ? (
+                  <>
+                    <span className="text-lg font-semibold text-foreground">
+                      {modelScore.overall?.toFixed(1)}
+                    </span>
+                    <Badge
+                      className="ml-2"
+                      variant={
+                        modelScore.breakdown?.fit_level
+                          ? FIT_LEVEL_BADGE_VARIANTS[
+                              modelScore.breakdown
+                                .fit_level as keyof typeof FIT_LEVEL_BADGE_VARIANTS
+                            ]
+                          : 'secondary'
+                      }
+                    >
+                      {translatedBreakdown.fit_level}
+                    </Badge>
+                  </>
+                ) : isScoreLoading ? (
+                  <Skeleton className="h-6 w-24 rounded-md" />
+                ) : null}
+              </div>
+              {isScoreReady ? (
+                <div className="flex gap-2 flex-wrap">
+                  <div className="flex items-center gap-1 px-3 py-1 text-sm bg-secondary rounded-md ">
+                    <IconBriefcase
+                      size={20}
+                      className="text-muted-foreground"
+                      title={t('hub:scoreSummary.useCase')}
+                    />
+                    <span className="text-foreground">
+                      {translatedBreakdown.use_case}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 px-3 py-1 text-sm bg-secondary rounded-md ">
+                    <IconBrandSpeedtest
+                      size={20}
+                      className="text-muted-foreground"
+                      title={t('hub:scoreSummary.token-sec')}
+                    />
+                    <span className="text-foreground">
+                      {modelScore.estimated_tps > 0
+                        ? modelScore.estimated_tps.toFixed(1)
+                        : t('hub:scoreSummary.na')}{' '}
+                      tok/sec
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 px-3 py-1 text-sm bg-secondary rounded-md ">
+                    <IconStar
+                      size={20}
+                      className="text-muted-foreground"
+                      title={t('hub:scoreSummary.bestQuant')}
+                    />
+                    <span className="text-foreground">
+                      {translatedBreakdown.best_quant}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 px-3 py-1 text-sm bg-secondary rounded-md ">
+                    <IconCpu
+                      size={20}
+                      className="text-muted-foreground"
+                      title={t('hub:scoreSummary.runMode')}
+                    />
+                    <span className="text-foreground">
+                      {translatedBreakdown.run_mode}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 px-3 py-1 text-sm bg-secondary rounded-md">
+                    <IconDevicesPc
+                      size={20}
+                      className="text-muted-foreground"
+                      title={t('hub:scoreSummary.memRequiredGb')}
+                    />
+                    <span className="text-foreground">
+                      {translatedBreakdown.memory_required_gb.toFixed(1)} Gb
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 text-sm text-muted-foreground">
+                  {modelScore?.reason ||
+                    t('hub:scoreSummary.pendingDescription')}
+                </div>
+              )}
+            </div>
+
             {/* Variants Section */}
             {modelData.quants && modelData.quants.length > 0 && (
               <div className="mb-8">
@@ -353,6 +553,12 @@ function HubModelDetailContent() {
                           .replace(/_TensorRT$/i, '')
                           .replace(/-TensorRT$/i, '')
 
+                        // Is Best Quant
+                        const isBestQuant = isBestQuantVariant(
+                          variant.model_id,
+                          modelScore?.breakdown?.best_quant
+                        )
+
                         return (
                           <tr
                             key={variant.model_id}
@@ -362,6 +568,11 @@ function HubModelDetailContent() {
                               <span className="text-sm font-medium">
                                 {versionName}
                               </span>
+                              {isBestQuant && (
+                                <Badge className="ml-2" variant="success">
+                                  {t('hub:scoreSummary.bestQuant')}
+                                </Badge>
+                              )}
                             </td>
                             <td className="py-3 px-2">
                               <span className="text-sm text-muted-foreground">
@@ -380,6 +591,8 @@ function HubModelDetailContent() {
                                 defaultModelQuantizations={
                                   DEFAULT_MODEL_QUANTIZATIONS
                                 }
+                                modelSupportStatus={modelSupportStatus}
+                                onCheckModelSupport={checkModelSupport}
                               />
                             </td>
                             <td className="py-3 px-2 text-right ml-auto">
