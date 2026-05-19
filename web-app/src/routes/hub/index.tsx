@@ -27,7 +27,9 @@ import {
   IconFileCode,
   IconEye,
   IconSearch,
+  IconRocket,
   IconTool,
+  IconBrandSpeedtest,
 } from '@tabler/icons-react'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -42,8 +44,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Badge } from '@/components/ui/badge'
 import { useServiceHub } from '@/hooks/useServiceHub'
-import type { CatalogModel } from '@/services/models/types'
+import type { CatalogModel, ModelQuant } from '@/services/models/types'
 import HeaderPage from '@/containers/HeaderPage'
 import { ChevronsUpDown, Loader } from 'lucide-react'
 import { useTranslation } from '@/i18n/react-i18next-compat'
@@ -56,6 +59,12 @@ import { MlxModelDownloadAction } from '@/containers/MlxModelDownloadAction'
 import { DEFAULT_MODEL_QUANTIZATIONS } from '@/constants/models'
 import { Button } from '@/components/ui/button'
 import { RenderMarkdown } from '@/containers/RenderMarkdown'
+import { useModelScore } from '@/hooks/useModelScores'
+import { selectBestGgufVariant } from '@/lib/modelQuantization'
+import {
+  FIT_LEVEL_BADGE_VARIANTS,
+  FIT_LEVEL_TRANSLATION_KEYS,
+} from '../../utils/scoreUtils'
 
 type SearchParams = {
   repo: string
@@ -147,6 +156,12 @@ function HubContent() {
   const addModelSourceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   )
+  const { modelScores, fetchModelScore } = useModelScore(
+    useShallow((state) => ({
+      modelScores: state.scores,
+      fetchModelScore: state.fetchModelScore,
+    }))
+  )
 
   const toggleModelExpansion = useCallback((modelId: string) => {
     setExpandedModels((prev) => ({
@@ -204,7 +219,7 @@ function HubContent() {
       filtered = filtered
         ?.map((model) => ({
           ...model,
-          quants: model.quants?.filter((variant) => {
+          quants: model.quants?.filter((variant: ModelQuant) => {
             // Check both direct match and with developer prefix (like DownloadButton does)
             const isLlamaCppDownloaded = useModelProvider
               .getState()
@@ -233,13 +248,17 @@ function HubContent() {
     if (huggingFaceRepo) {
       filtered = [huggingFaceRepo, ...filtered]
     }
-    return filtered
+    return filtered?.map((model) => ({
+      ...model,
+      score: modelScores[model.model_name],
+    }))
   }, [
     sortedModels,
     debouncedSearchValue,
     showOnlyDownloaded,
     huggingFaceRepo,
     searchOptions,
+    modelScores,
   ])
 
   // Dynamic estimate size based on model state
@@ -286,6 +305,17 @@ function HubContent() {
     const timer = setTimeout(() => setIsInitialLoad(false), 150)
     return () => clearTimeout(timer)
   }, [isInitialLoad, filteredModels.length])
+
+  useEffect(() => {
+    virtualItems.forEach((virtualItem) => {
+      const model = filteredModels[virtualItem.index]
+      if (!model || modelScores[model.model_name]) return
+      void fetchModelScore(model)
+    })
+    // visibleIndices (not virtualItems) is the dep so this only re-runs when
+    // the set of visible rows actually changes, not on every scroll event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchModelScore, filteredModels, modelScores, visibleIndices])
 
   const fetchHuggingFaceModel = async (searchValue: string) => {
     if (
@@ -580,6 +610,82 @@ function HubContent() {
                           </div>
                         }
                       >
+                         <Card
+                          header={
+                            <div className="flex items-center justify-between gap-x-2">
+                              <div
+                                className="cursor-pointer"
+                                onClick={() => {
+                                  navigate({
+                                    to: route.hub.model,
+                                    params: {
+                                      modelId: model.model_name,
+                                    },
+                                  })
+                                }}
+                              >
+                                <h1
+                                  className={cn(
+                                    'text-foreground font-medium text-base capitalize sm:max-w-none',
+                                    isRecommendedModel(model.model_name)
+                                      ? 'hub-model-card-step'
+                                      : ''
+                                  )}
+                                  title={
+                                    extractModelName(model.model_name) || ''
+                                  }
+                                >
+                                  {extractModelName(model.model_name) || ''}
+                                </h1>
+                              </div>
+                              <div className="shrink-0 space-x-3 flex items-center">
+                                <span className="text-muted-foreground font-medium text-xs">
+                                  {model.is_mlx
+                                    ? model.safetensors_files?.[0]?.file_size
+                                    : getRepresentativeVariant(model)
+                                        ?.file_size}
+                                </span>
+                                <div className="gap-2 inline-flex items-center">
+                                  <div className="flex items-center gap-1 px-2 py-0.5">
+                                    <IconRocket
+                                      size={20}
+                                      className="text-muted-foreground"
+                                      title={t('hub:scoreSummary.token-sec')}
+                                    />
+                                    <span
+                                      className={cn(
+                                        'text-xs text-muted-foreground font-medium'
+                                      )}
+                                    >
+                                      {score?.status === 'ready' &&
+                                      typeof score.overall === 'number' ? (
+                                        score.overall.toFixed(1)
+                                      ) : !score ||
+                                        score.status === 'loading' ? (
+                                        <Loader className="size-3 animate-spin text-muted-foreground" />
+                                      ) : (
+                                        t('hub:scoreSummary.na')
+                                      )}
+                                    </span>
+                                  </div>
+                                  {fitLevel !== undefined && (
+                                    <Badge
+                                      className="ml-2"
+                                      variant={
+                                        fitLevel
+                                          ? FIT_LEVEL_BADGE_VARIANTS[
+                                              fitLevel as keyof typeof FIT_LEVEL_BADGE_VARIANTS
+                                            ]
+                                          : 'secondary'
+                                      }
+                                    >
+                                      {t(
+                                        FIT_LEVEL_TRANSLATION_KEYS[fitLevel] ??
+                                          fitLevel
+                                      )}
+                                    </Badge>
+                                  )}
+                                </div>
                         <div className="line-clamp-2 mt-3 text-muted-foreground leading-normal">
                           <RenderMarkdown
                             className="select-none reset-heading"
