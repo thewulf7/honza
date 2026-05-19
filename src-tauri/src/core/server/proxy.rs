@@ -2478,7 +2478,7 @@ async fn proxy_request(
             return Ok(response);
         }
         (hyper::Method::POST, "/chat/completions")
-        | (hyper::Method::POST, "/responses
+        | (hyper::Method::POST, "/responses")
         | (hyper::Method::POST, "/completions")
         | (hyper::Method::POST, "/embeddings")
         | (hyper::Method::POST, "/messages/count_tokens") => {
