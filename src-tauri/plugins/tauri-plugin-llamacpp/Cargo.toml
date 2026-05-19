@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-llamacpp"
-version = "0.6.599"
+version = "13.0.0"
 authors = ["Jan <service@jan.ai>"]
 description = "Tauri plugin for managing Jan LlamaCpp server processes and model loading"
 license = "MIT"
@@ -15,6 +15,13 @@ base64 = "0.22.1"
 byteorder = "1.5.0"
 hmac = "0.12.1"
 jan-utils = { path = "../../utils" }
+# llmfit-core pulls in `ureq` (an HTTP client) as a transitive dependency.
+# llmfit-core itself uses it only for optional model-card fetching that is NOT
+# exercised by this integration -- all scoring is local/offline. No network
+# calls are made during hub model scoring. Track upstream if a no-network
+# feature flag becomes available: https://github.com/janhq/jan/pull/7784
+llmfit-core = "0.8.9"
+lddtree = "0.5"
 walkdir = "2"
 log = "0.4"
 rand = "0.8"

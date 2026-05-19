@@ -1,4 +1,11 @@
 fn main() {
+    println!("cargo:rerun-if-changed=resources/bin/mlx-server");
+    println!("cargo:rerun-if-changed=resources/bin/mlx-swift_Cmlx.bundle");
+    println!(
+        "cargo:rerun-if-changed=resources/bin/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+    );
+    println!("cargo:rerun-if-changed=resources/bin/jan-cli");
+
     #[cfg(not(feature = "cli"))]
     {
         tauri_build::build();

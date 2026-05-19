@@ -51,6 +51,10 @@ on:
         required: false
       JAN_SIGNING_KEY:
         required: false
+      POSTHOG_KEY:
+        required: false
+      POSTHOG_HOST:
+        required: false
     outputs:
       WIN_SIG:
         value: ${{ jobs.build-windows-x64.outputs.WIN_SIG }}
@@ -167,6 +171,8 @@ jobs:
           generate_build_version ${{ inputs.new_version }}
           sed -i "s/jan_version/$new_base_version/g" ./src-tauri/tauri.bundle.windows.nsis.template
           sed -i "s/jan_build/$new_build_version/g" ./src-tauri/tauri.bundle.windows.nsis.template
+          WIN_WORKSPACE=$(echo "$GITHUB_WORKSPACE" | tr '\\' '/')
+          sed -i "s|jan_workspace_path|${WIN_WORKSPACE}|g" ./src-tauri/tauri.bundle.windows.nsis.template
 
           echo "---------tauri.windows.conf.json---------"
           cat ./src-tauri/tauri.windows.conf.json

@@ -9,6 +9,8 @@ REPORT_PORTAL_DESCRIPTION ?= "Jan App report"
 # Detect OS
 ifeq ($(OS),Windows_NT)
     DETECTED_OS := Windows
+	SHELL = cmd.exe
+    .SHELLFLAGS = /C
 else
     DETECTED_OS := $(shell uname -s)
 endif
@@ -161,7 +163,7 @@ ifeq ($(DETECTED_OS),Darwin)
 	echo "Copying mlx-server from $$DERIVED_DATA..."; \
 	cp "$$DERIVED_DATA/mlx-server" src-tauri/resources/bin/mlx-server; \
 	rm -rf src-tauri/resources/bin/mlx-swift_Cmlx.bundle; \
-	cp -r "$$DERIVED_DATA/mlx-swift_Cmlx.bundle" src-tauri/resources/bin/; \
+	cp -R "$$DERIVED_DATA/mlx-swift_Cmlx.bundle" src-tauri/resources/bin/; \
 	chmod +x src-tauri/resources/bin/mlx-server; \
 	echo "MLX server built and copied successfully"; \
 	echo "Checking for code signing identity..."; \
@@ -186,7 +188,7 @@ endif
 # Build MLX server only if not already present (for dev)
 build-mlx-server-if-exists:
 ifeq ($(DETECTED_OS),Darwin)
-	@if [ -f "src-tauri/resources/bin/mlx-server" ]; then \
+	@if [ -f "src-tauri/resources/bin/mlx-server" ] && [ -f "src-tauri/resources/bin/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib" ]; then \
 		echo "MLX server already exists at src-tauri/resources/bin/mlx-server, skipping build..."; \
 	else \
 		make build-mlx-server; \
@@ -220,7 +222,7 @@ ifeq ($(DETECTED_OS),Darwin)
 	cp src-tauri/resources/bin/jan-cli src-tauri/target/universal-apple-darwin/release/jan-cli
 else ifeq ($(DETECTED_OS),Windows)
 	cd src-tauri && cargo build --release --features cli --bin jan-cli
-	cp src-tauri/target/release/jan-cli.exe src-tauri/resources/bin/jan-cli.exe
+	copy src-tauri\target\release\jan-cli.exe src-tauri\resources\bin\jan-cli.exe
 else
 	cd src-tauri && cargo build --release --features cli --bin jan-cli
 	cp src-tauri/target/release/jan-cli src-tauri/resources/bin/jan-cli

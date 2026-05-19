@@ -42,6 +42,8 @@ type Model = {
   /** Whether this model was imported from a user-supplied local file
    *  (path lives outside the provider's managed models directory). */
   imported?: boolean
+  /** File size in bytes, populated for local models. */
+  size?: number
 }
 
 /**

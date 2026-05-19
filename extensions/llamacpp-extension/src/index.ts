@@ -51,6 +51,7 @@ import {
   loadLlamaModel,
   readGgufMetadata,
   isModelSupported,
+  scoreHubModel,
   unloadLlamaModel,
   LlamacppConfig,
   DownloadItem,
@@ -58,6 +59,9 @@ import {
   EmbeddingResponse,
   ModelProps,
   DeviceList,
+  HubModelScoreRequest,
+  HubModelScoreResult,
+  SystemMemory,
   mapOldBackendToNew,
   findLatestVersionForBackend,
   prioritizeBackends,
@@ -2037,7 +2041,7 @@ export default class llamacpp_extension extends AIEngine {
 
   override async load(
     modelId: string,
-    _overrideSettings?: Partial<LlamacppConfig>,
+    overrideSettings?: Partial<LlamacppConfig>,
     isEmbedding: boolean = false,
     _bypassAutoUnload: boolean = false
   ): Promise<SessionInfo> {
@@ -2050,6 +2054,16 @@ export default class llamacpp_extension extends AIEngine {
       return this.loadingModels.get(modelId)!
     }
 
+    // Persist model-config settings (ctx_size, n_gpu_layers) to model.yml so the
+    // router preset picks them up. If anything changed, restart the router to
+    // regenerate the preset before loading.
+    if (overrideSettings) {
+      const changed = await this.patchModelYml(modelId, overrideSettings)
+      if (changed) {
+        await this.startRouter()
+      }
+    }
+
     const loadingPromise = this.performLoad(modelId, isEmbedding)
     this.loadingModels.set(modelId, loadingPromise)
 
@@ -2057,6 +2071,74 @@ export default class llamacpp_extension extends AIEngine {
       return await loadingPromise
     } finally {
       this.loadingModels.delete(modelId)
+    }
+  }
+
+  /**
+   * Writes model-config-relevant settings from `overrides` into the model's
+   * `model.yml`. Only keys that actually affect preset generation are
+   * considered (ctx_size, n_gpu_layers). Returns `true` when the file was
+   * changed so the caller can decide whether to restart the router.
+   */
+  private async patchModelYml(
+    modelId: string,
+    overrides: Partial<LlamacppConfig>
+  ): Promise<boolean> {
+    try {
+      const providerPath = await this.getProviderPath()
+      const modelYmlPath = await joinPath([
+        providerPath,
+        'models',
+        modelId,
+        'model.yml',
+      ])
+
+      if (!(await fs.existsSync(modelYmlPath))) return false
+
+      const current = await invoke<Record<string, unknown>>('read_yaml', {
+        path: modelYmlPath,
+      })
+
+      let changed = false
+      const patch: Record<string, unknown> = { ...current }
+
+      // ctx_size: positive number → set; empty / 0 → remove (let router auto-fit)
+      if ('ctx_size' in overrides) {
+        const newVal = Number(overrides.ctx_size)
+        const oldVal =
+          typeof current.ctx_size === 'number' ? current.ctx_size : 0
+        if (newVal > 0 && newVal !== oldVal) {
+          patch.ctx_size = newVal
+          changed = true
+        } else if (newVal <= 0 && 'ctx_size' in current) {
+          delete patch.ctx_size
+          changed = true
+        }
+      }
+
+      // n_gpu_layers: any integer is valid (-1 = all, 0 = CPU, N = partial)
+      if ('n_gpu_layers' in overrides) {
+        const newVal = overrides.n_gpu_layers
+        if (
+          typeof newVal === 'number' &&
+          Number.isInteger(newVal) &&
+          newVal !== current.n_gpu_layers
+        ) {
+          patch.n_gpu_layers = newVal
+          changed = true
+        }
+      }
+
+      if (!changed) return false
+
+      await invoke<void>('write_yaml', { data: patch, savePath: modelYmlPath })
+      logger.info(
+        `Patched model.yml for ${modelId}: ctx_size=${patch.ctx_size ?? 'unset'}, n_gpu_layers=${patch.n_gpu_layers ?? 'unset'}`
+      )
+      return true
+    } catch (e) {
+      logger.warn(`patchModelYml failed for ${modelId}:`, e)
+      return false
     }
   }
 
@@ -2762,6 +2844,16 @@ export default class llamacpp_extension extends AIEngine {
     try {
       const result = await isModelSupported(path, Number(ctxSize))
       return result
+    } catch (e) {
+      throw new Error(String(e))
+    }
+  }
+
+  async getHubModelScore(
+    request: HubModelScoreRequest
+  ): Promise<HubModelScoreResult> {
+    try {
+      return await scoreHubModel(request)
     } catch (e) {
       throw new Error(String(e))
     }

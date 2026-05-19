@@ -25,24 +25,26 @@ A high-performance inference server for MLX models, providing an OpenAI-compatib
 cd mlx-server
 
 # Build in release mode
-xcodebuild -scheme mlx-server -configuration Release
+xcodebuild -scheme mlx-server -configuration Release -derivedDataPath .build -destination 'platform=macOS,arch=arm64'
 
-# The binary and metallib will be in the Xcode derived data build products
+# The binary and metallib bundle will be in .build/Build/Products/Release
 ```
 
 ## Quick Start
 
 ```bash
 # Run with a local MLX model
-./.build/arm64-apple-macosx/release/mlx-server \
+./.build/Build/Products/Release/mlx-server \
   --model "/path/to/your/model" \
   --port 8080
 ```
 
+`mlx-server` must be launched from the Xcode products directory so `mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib` is colocated with the binary.
+
 ## Command-Line Options
 
 | Option | Default | Description |
-|--------|---------|-------------|
+| ------ | ------- | ----------- |
 | `-m, --model` | Required | Path to model directory or HuggingFace model ID |
 | `--port` | 8080 | HTTP server port |
 | `--ctx-size` | 4096 | Context window size |
@@ -98,7 +100,7 @@ curl http://localhost:8080/health
 
 ## Project Structure
 
-```
+```text
 mlx-server/
 ├── Sources/
 │   └── MLXServer/
@@ -130,6 +132,7 @@ mlx-server/
 ### Model Loading Fails
 
 Ensure the model directory contains:
+
 - `config.json` - Model configuration
 - `tokenizer.json` - Tokenizer vocabulary
 - `model.safetensors` or `model.safetensors.index.json` - Model weights
@@ -138,6 +141,7 @@ Ensure the model directory contains:
 ### Port Already in Use
 
 Change the port:
+
 ```bash
 --port 8081
 ```

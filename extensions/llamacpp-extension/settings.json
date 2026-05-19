@@ -87,6 +87,18 @@
     }
   },
   {
+    "key": "ctx_size",
+    "title": "Context Size",
+    "description": "Maximum context window in tokens (0 = use model's training maximum). Reducing this caps the KV cache and is the primary way to control VRAM usage when --fit is off.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 16384,
+      "placeholder": "16384",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
     "key": "threads",
     "title": "Threads",
     "description": "Number of threads to use during generation (-1 for logical cores).",
@@ -385,6 +397,23 @@
       "placeholder": "0",
       "type": "number",
       "textAlign": "right"
+    }
+  },
+  {
+    "key": "spec_type",
+    "title": "Speculative type",
+    "description": "Model-free speculative decoding using token history patterns. Works without a draft model. Can be combined with a draft model. None = disabled. ngram-mod - good for reasoning models. ",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "none",
+      "options": [
+        { "value": "none", "name": "none" },
+        { "value": "ngram-simple", "name": "ngram-simple" },
+        { "value": "ngram-mod", "name": "ngram-mod" },
+        { "value": "ngram-cache", "name": "ngram-cache" },
+        { "value": "ngram-map-k", "name": "ngram-map-k" },
+        { "value": "ngram-map-k4v", "name": "ngram-map-k4v (experimental)" }
+      ]
     }
   }
 ]

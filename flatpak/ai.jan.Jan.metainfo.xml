@@ -104,6 +104,11 @@
   </keywords>
 
   <releases>
+    <release version="13.0.0" date="2026-05-18">
+      <description>
+        <p>MLX fix, llmfit integration, codex integration</p>
+      </description>
+    </release>
     <release version="0.7.9" date="2026-03-23">
       <description>
         <p>Smarter context management, fixed CLI on Windows, and safer data location handling</p>

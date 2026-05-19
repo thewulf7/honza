@@ -38,6 +38,7 @@ describe('DefaultModelsService', () => {
     isModelSupported: vi.fn(),
     isToolSupported: vi.fn(),
     checkMmprojExists: vi.fn(),
+    getHubModelScore: vi.fn(),
     getMtpInfo: vi.fn(),
     updateMtpSettings: vi.fn(),
   }
