@@ -1,6 +1,6 @@
 import { IconSettings } from '@tabler/icons-react'
 import debounce from 'lodash.debounce'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 
 import {
   Sheet,
@@ -37,7 +37,7 @@ export function ModelSetting({
   model,
   provider,
 }: ModelSettingProps) {
-  const { updateProvider } = useModelProvider()
+  const { updateProvider, providers } = useModelProvider()
   const { t } = useTranslation()
   const serviceHub = useServiceHub()
   const setActiveModels = useAppState((state) => state.setActiveModels)
@@ -78,7 +78,42 @@ export function ModelSetting({
     }
 
     // Find the model index in the provider's models array
-    const modelIndex = provider.models.findIndex((m) => m.id === model.id)
+    // All non-embedding llamacpp models except the current one (candidates for draft model)
+    const draftModelCandidates = useMemo(
+      () =>
+        providers
+          .filter((p) => p.provider === 'llamacpp')
+          .flatMap((p) => p.models)
+          .filter(
+            (candidate) =>
+              candidate.id !== model.id &&
+              !candidate.settings?.embedding?.controller_props?.value
+          )
+          .map((candidate) => ({
+            value: candidate.id,
+            name: candidate.displayName ?? candidate.id,
+          })),
+      [model.id, providers]
+    )
+  
+    const getControllerProps = useCallback((config: ProviderSetting) => {
+      switch (config.key) {
+        case 'draft_model_id':
+          return {
+            ...config.controller_props,
+            options: [
+              ...(config.controller_props?.options || []),
+              ...draftModelCandidates,
+            ],
+            value: config.controller_props?.value,
+          }
+        default:
+          return {
+            ...config.controller_props,
+            value: config.controller_props?.value,
+          }
+      }
+    }, [draftModelCandidates])
 
     if (modelIndex !== -1) {
       // Create a copy of the provider's models array
@@ -101,7 +136,12 @@ export function ModelSetting({
         key === 'offload_mmproj' ||
         key === 'batch_size' ||
         key === 'cpu_moe' ||
-        key === 'n_cpu_moe'
+        key === 'n_cpu_moe' ||
+        key === 'reasoning' ||
+        key === 'draft_model_id' ||
+        key === 'spec_type' ||
+        key === 'draft_max' ||
+        key === 'draft_min'
       ) {
         // Check if model is running before stopping it
         serviceHub
