@@ -40,11 +40,19 @@ vi.mock('@ai-sdk/google', () => ({
 }))
 
 vi.mock('@ai-sdk/openai', () => ({
-  createOpenAI: vi.fn(() => vi.fn(() => ({ type: 'openai' }))),
+  createOpenAI: vi.fn(() => {
+    const fn: any = vi.fn(() => ({ type: 'openai' }))
+    fn.chat = vi.fn(() => ({ type: 'openai' }))
+    return fn
+  }),
 }))
 
 vi.mock('@ai-sdk/xai', () => ({
   createXai: vi.fn(() => vi.fn(() => ({ type: 'xai' }))),
+}))
+
+vi.mock('@ai-sdk/mistral', () => ({
+  createMistral: vi.fn(() => vi.fn(() => ({ type: 'mistral' }))),
 }))
 
 vi.mock('ai', () => ({
@@ -125,7 +133,7 @@ describe('ModelFactory - coverage', () => {
   })
 
   it('creates openai-compatible model for known providers', async () => {
-    for (const p of ['azure', 'groq', 'together', 'fireworks', 'deepseek', 'mistral', 'cohere', 'perplexity', 'moonshot', 'minimax']) {
+    for (const p of ['azure', 'groq', 'together', 'fireworks', 'deepseek', 'cohere', 'perplexity', 'moonshot', 'minimax']) {
       const model = await ModelFactory.createModel('model-1', mkProvider(p), {})
       expect(model).toBeDefined()
     }

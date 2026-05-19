@@ -1,4 +1,5 @@
 import TextareaAutosize from 'react-textarea-autosize'
+import { invoke } from '@tauri-apps/api/core'
 import { cn, formatBytes } from '@/lib/utils'
 import { usePrompt } from '@/hooks/usePrompt'
 import { useThreads } from '@/hooks/useThreads'
@@ -52,7 +53,6 @@ import {
   SESSION_STORAGE_KEY,
   SESSION_STORAGE_PREFIX,
 } from '@/constants/chat'
-import { localStorageKey } from '@/constants/localStorage'
 import { defaultModel } from '@/lib/models'
 import { useAssistant } from '@/hooks/useAssistant'
 import DropdownToolsAvailable from '@/containers/DropdownToolsAvailable'
@@ -87,7 +87,6 @@ import {
 } from '@/types/attachment'
 import JanBrowserExtensionDialog from '@/containers/dialogs/JanBrowserExtensionDialog'
 import { useJanBrowserExtension } from '@/hooks/useJanBrowserExtension'
-import { PromptVisionModel } from '@/containers/PromptVisionModel'
 import { useAgentMode } from '@/hooks/useAgentMode'
 import { AssistantsMenu } from '@/components/AssistantsMenu'
 
@@ -128,9 +127,6 @@ const ChatInput = memo(function ChatInput({
   const currentThread = useThreads((state) => state.getCurrentThread())
   const updateCurrentThreadAssistant = useThreads(
     (state) => state.updateCurrentThreadAssistant
-  )
-  const updateCurrentThreadModel = useThreads(
-    (state) => state.updateCurrentThreadModel
   )
   const { t } = useTranslation()
   const spellCheckChatInput = useGeneralSetting(
@@ -186,7 +182,6 @@ const ChatInput = memo(function ChatInput({
   >(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const [hasMmproj, setHasMmproj] = useState(false)
-  const [showVisionModelPrompt, setShowVisionModelPrompt] = useState(false)
   const activeModels = useAppState(useShallow((state) => state.activeModels))
   const wasPointerDown = useRef(false)
 
@@ -549,8 +544,18 @@ const ChatInput = memo(function ChatInput({
         abortControllers[threadId]?.abort()
       }
       cancelToolCall?.()
+      // Escalate: if the llama.cpp model is still processing after the HTTP
+      // abort, force-unload it so generation actually stops. KV cache is lost.
+      const modelId = selectedModel?.id
+      if (selectedProvider === 'llamacpp' && modelId) {
+        setTimeout(() => {
+          invoke('plugin:llamacpp|force_stop_model', { modelId }).catch((e) => {
+            console.warn('force_stop_model failed:', e)
+          })
+        }, 500)
+      }
     },
-    [abortControllers, cancelToolCall, onStop]
+    [abortControllers, cancelToolCall, onStop, selectedModel?.id, selectedProvider]
   )
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1350,58 +1355,6 @@ const ChatInput = memo(function ChatInput({
     }
   }, [serviceHub, processImageFiles])
 
-  const handleImagePickerClick = async () => {
-    if (hasMmproj) {
-      await openImagePicker()
-      return
-    }
-    setShowVisionModelPrompt(true)
-  }
-
-  const handleVisionModelDownloadComplete = useCallback(
-    (modelId: string) => {
-      setShowVisionModelPrompt(false)
-
-      try {
-        localStorage.setItem(
-          localStorageKey.lastUsedModel,
-          JSON.stringify({ provider: 'llamacpp', model: modelId })
-        )
-      } catch {
-        // Ignore localStorage errors
-      }
-
-      setTimeout(() => {
-        const provider = getProviderByName('llamacpp')
-        if (provider) {
-          const modelIndex = provider.models.findIndex((m) => m.id === modelId)
-          if (modelIndex !== -1) {
-            const model = provider.models[modelIndex]
-            const capabilities = model.capabilities || []
-
-            if (!capabilities.includes('vision')) {
-              const updatedModels = [...provider.models]
-              updatedModels[modelIndex] = {
-                ...model,
-                capabilities: [...capabilities, 'vision'],
-              }
-              updateProvider('llamacpp', { models: updatedModels })
-            }
-          }
-        }
-
-        selectModelProvider('llamacpp', modelId)
-        updateCurrentThreadModel({ id: modelId, provider: 'llamacpp' })
-      }, 500)
-    },
-    [
-      selectModelProvider,
-      getProviderByName,
-      updateProvider,
-      updateCurrentThreadModel,
-    ]
-  )
-
   const dropAcceptsAnything = hasMmproj || audioSupported
 
   const handleDragEnter = (e: React.DragEvent) => {
@@ -1843,17 +1796,19 @@ const ChatInput = memo(function ChatInput({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start">
-                    <DropdownMenuItem onClick={handleImagePickerClick}>
-                      <IconPhoto size={18} className="text-muted-foreground" />
-                      <span>Add Images</span>
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        className="hidden"
-                        multiple
-                        onChange={handleFileChange}
-                      />
-                    </DropdownMenuItem>
+                    {hasMmproj && (
+                      <DropdownMenuItem onClick={() => void openImagePicker()}>
+                        <IconPhoto size={18} className="text-muted-foreground" />
+                        <span>Add Images</span>
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          className="hidden"
+                          multiple
+                          onChange={handleFileChange}
+                        />
+                      </DropdownMenuItem>
+                    )}
                     {audioSupported && (
                       <DropdownMenuItem onClick={() => void openAudioPicker()}>
                         <IconMusic size={18} className="text-muted-foreground" />
@@ -2363,13 +2318,6 @@ const ChatInput = memo(function ChatInput({
         onOpenChange={setExtensionDialogOpen}
         state={extensionDialogState}
         onCancel={handleExtensionDialogCancel}
-      />
-
-      {/* Vision Model Download Prompt */}
-      <PromptVisionModel
-        open={showVisionModelPrompt}
-        onClose={() => setShowVisionModelPrompt(false)}
-        onDownloadComplete={handleVisionModelDownloadComplete}
       />
     </div>
   )

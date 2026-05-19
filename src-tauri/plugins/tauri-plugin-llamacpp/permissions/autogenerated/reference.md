@@ -9,6 +9,9 @@ Default permissions for the llamacpp plugin
 - `allow-unload-llama-model`
 - `allow-start-router`
 - `allow-stop-router`
+- `allow-try-graceful-stop-router`
+- `allow-force-kill-router-tree`
+- `allow-force-stop-model`
 - `allow-get-router-info`
 - `allow-get-devices`
 - `allow-generate-api-key`
@@ -311,6 +314,58 @@ Enables the find_session_by_model command without any pre-configured scope.
 <td>
 
 Denies the find_session_by_model command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-force-kill-router-tree`
+
+</td>
+<td>
+
+Enables the force_kill_router_tree command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-force-kill-router-tree`
+
+</td>
+<td>
+
+Denies the force_kill_router_tree command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-force-stop-model`
+
+</td>
+<td>
+
+Enables the force_stop_model command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-force-stop-model`
+
+</td>
+<td>
+
+Denies the force_stop_model command without any pre-configured scope.
 
 </td>
 </tr>
@@ -656,6 +711,32 @@ Denies the handle_setting_update command without any pre-configured scope.
 <tr>
 <td>
 
+`llamacpp:allow-init-native-backend`
+
+</td>
+<td>
+
+Enables the init_native_backend command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-init-native-backend`
+
+</td>
+<td>
+
+Denies the init_native_backend command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `llamacpp:allow-is-cuda-installed`
 
 </td>
@@ -812,6 +893,188 @@ Denies the map_old_backend_to_new command without any pre-configured scope.
 <tr>
 <td>
 
+`llamacpp:allow-native-chat-completion`
+
+</td>
+<td>
+
+Enables the native_chat_completion command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-native-chat-completion`
+
+</td>
+<td>
+
+Denies the native_chat_completion command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-native-chat-template`
+
+</td>
+<td>
+
+Enables the native_chat_template command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-native-chat-template`
+
+</td>
+<td>
+
+Denies the native_chat_template command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-native-detokenize`
+
+</td>
+<td>
+
+Enables the native_detokenize command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-native-detokenize`
+
+</td>
+<td>
+
+Denies the native_detokenize command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-native-embeddings`
+
+</td>
+<td>
+
+Enables the native_embeddings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-native-embeddings`
+
+</td>
+<td>
+
+Denies the native_embeddings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-native-model-metadata`
+
+</td>
+<td>
+
+Enables the native_model_metadata command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-native-model-metadata`
+
+</td>
+<td>
+
+Denies the native_model_metadata command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-native-system-info`
+
+</td>
+<td>
+
+Enables the native_system_info command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-native-system-info`
+
+</td>
+<td>
+
+Denies the native_system_info command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-native-tokenize`
+
+</td>
+<td>
+
+Enables the native_tokenize command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-native-tokenize`
+
+</td>
+<td>
+
+Denies the native_tokenize command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `llamacpp:allow-parse-backend-version`
 
 </td>
@@ -942,6 +1205,32 @@ Denies the remove_old_backend_versions command without any pre-configured scope.
 <tr>
 <td>
 
+`llamacpp:allow-router-slots-idle`
+
+</td>
+<td>
+
+Enables the router_slots_idle command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-router-slots-idle`
+
+</td>
+<td>
+
+Denies the router_slots_idle command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `llamacpp:allow-score-hub-model`
 
 </td>
@@ -1039,6 +1328,32 @@ Enables the stop_router command without any pre-configured scope.
 <td>
 
 Denies the stop_router command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:allow-try-graceful-stop-router`
+
+</td>
+<td>
+
+Enables the try_graceful_stop_router command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-try-graceful-stop-router`
+
+</td>
+<td>
+
+Denies the try_graceful_stop_router command without any pre-configured scope.
 
 </td>
 </tr>

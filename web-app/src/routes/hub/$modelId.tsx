@@ -24,8 +24,8 @@ import { RenderMarkdown } from '@/containers/RenderMarkdown'
 import { useEffect, useMemo, useCallback, useState } from 'react'
 import { useModelProvider } from '@/hooks/useModelProvider'
 import { useDownloadStore } from '@/hooks/useDownloadStore'
-import type { DownloadProgressProps } from '@/hooks/useDownloadStore'
 import { useServiceHub } from '@/hooks/useServiceHub'
+import type { DownloadProgressProps } from '@/hooks/useDownloadStore'
 import type { CatalogModel, ModelQuant } from '@/services/models/types'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
@@ -115,7 +115,7 @@ function HubModelDetailContent() {
     typeof modelScore.overall === 'number' &&
     translatedBreakdown !== undefined
   const isScoreLoading = !modelScore || modelScore.status === 'loading'
-
+  
   // State for README content
   const [readmeContent, setReadmeContent] = useState<string>('')
   const [isLoadingReadme, setIsLoadingReadme] = useState(false)
@@ -124,7 +124,7 @@ function HubModelDetailContent() {
   const [modelSupportStatus, setModelSupportStatus] = useState<
     Record<string, 'RED' | 'YELLOW' | 'GREEN' | 'LOADING' | 'GREY'>
   >({})
-
+  
   useEffect(() => {
     fetchSources()
   }, [fetchSources])
@@ -144,7 +144,6 @@ function HubModelDetailContent() {
   useEffect(() => {
     fetchRepo()
   }, [modelId, fetchRepo])
-
   const modelData = sourceModel ?? repoData
 
   // Download processes
@@ -297,14 +296,14 @@ function HubModelDetailContent() {
       <div className="flex flex-col h-svh w-full">
         <HeaderPage>
           <Button
-            onClick={() => navigate({ to: route.hub.index })}
-            aria-label="Go back"
-            variant="ghost"
-            size="sm"
-          >
-            <IconArrowLeft size={18} className="text-muted-foreground" />
-            <span className="text-foreground">Back to Hub</span>
-          </Button>
+          onClick={() => navigate({ to: route.hub.index })}
+          aria-label="Go back"
+          variant="ghost"
+          size="sm"
+        >
+          <IconArrowLeft size={18} className="text-muted-foreground" />
+          <span className="text-foreground">Back to Hub</span>
+        </Button>
         </HeaderPage>
         <div className="flex-1 flex items-center justify-center">
           <p className="text-muted-foreground">Model not found</p>
@@ -338,10 +337,12 @@ function HubModelDetailContent() {
               <h1
                 className="text-2xl font-semibold mb-4 capitalize wrap-break-word line-clamp-2"
                 title={
-                  extractModelName(modelData.model_name) || modelData.model_name
+                  extractModelName(modelData.model_name) ||
+                  modelData.model_name
                 }
               >
-                {extractModelName(modelData.model_name) || modelData.model_name}
+                {extractModelName(modelData.model_name) ||
+                  modelData.model_name}
               </h1>
 
               {/* Stats */}
@@ -400,7 +401,7 @@ function HubModelDetailContent() {
               )}
             </div>
 
-            {/* Fit Score Section */}
+             {/* Fit Score Section */}
             <div className="mb-8">
               <div className="flex items-center -center gap-2 mb-4">
                 <IconRocket size={20} className="text-muted-foreground" />
@@ -524,17 +525,15 @@ function HubModelDetailContent() {
                       </tr>
                     </thead>
                     <tbody>
-                      {modelData.quants.map((variant: ModelQuant) => {
+                      {modelData.quants.map((variant) => {
                         const isDownloading =
                           localDownloadingModels.has(variant.model_id) ||
                           downloadProcesses.some(
-                            (download: DownloadProgressProps) =>
-                              download.id === variant.model_id
+                            (e) => e.id === variant.model_id
                           )
                         const downloadProgress =
                           downloadProcesses.find(
-                            (download: DownloadProgressProps) =>
-                              download.id === variant.model_id
+                            (e) => e.id === variant.model_id
                           )?.progress || 0
                         const isDownloaded = llamaProvider?.models.some(
                           (m: { id: string }) => m.id === variant.model_id
@@ -548,9 +547,11 @@ function HubModelDetailContent() {
                           : 'GGUF'
 
                         // Extract version name (remove format suffix)
-                        const versionName = getVariantDisplayName(
-                          variant.model_id
-                        )
+                        const versionName = variant.model_id
+                          .replace(/_GGUF$/i, '')
+                          .replace(/-GGUF$/i, '')
+                          .replace(/_TensorRT$/i, '')
+                          .replace(/-TensorRT$/i, '')
 
                         // Is Best Quant
                         const isBestQuant = isBestQuantVariant(
@@ -628,7 +629,9 @@ function HubModelDetailContent() {
                                   <Button
                                     size="sm"
                                     onClick={() => {
-                                      addLocalDownloadingModel(variant.model_id)
+                                      addLocalDownloadingModel(
+                                        variant.model_id
+                                      )
                                       serviceHub
                                         .models()
                                         .pullModelWithMetadata(
@@ -636,8 +639,8 @@ function HubModelDetailContent() {
                                           variant.path,
                                           (
                                             modelData.mmproj_models?.find(
-                                              (mmproj: { model_id: string }) =>
-                                                mmproj.model_id.toLowerCase() ===
+                                              (e) =>
+                                                e.model_id.toLowerCase() ===
                                                 'mmproj-f16'
                                             ) || modelData.mmproj_models?.[0]
                                           )?.path,
@@ -666,7 +669,9 @@ function HubModelDetailContent() {
               <div className="mb-8">
                 <div className="flex items-center gap-2 mb-4">
                   <IconFileCode size={20} className="text-muted-foreground" />
-                  <h2 className="text-lg font-semibold">README</h2>
+                  <h2 className="text-lg font-semibold">
+                    README
+                  </h2>
                 </div>
 
                 {isLoadingReadme ? (
