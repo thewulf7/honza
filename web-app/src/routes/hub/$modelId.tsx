@@ -361,7 +361,7 @@ function HubModelDetailContent() {
 
             {/* Fit Score Section */}
             <div className="mb-8">
-              <div className="flex items-center -center gap-2 mb-4">
+              <div className="flex items-center justify-center gap-2 mb-4">
                 <IconRocket size={20} className="text-muted-foreground" />
                 <h2 className="text-lg font-semibold text-foreground">
                   {t('hub:scoreSummary.fitScore')}
