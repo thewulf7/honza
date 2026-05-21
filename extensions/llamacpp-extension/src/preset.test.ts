@@ -8,18 +8,22 @@ vi.mock('@janhq/core', () => ({
     existsSync: vi.fn(async (p: string) => p === '/p/models' || p in modelYamls),
     mkdir: vi.fn(async () => undefined),
     readdirSync: vi.fn(async (dir: string) => {
-      if (dir === '/p/models') {
-        const ids = new Set(
-          Object.keys(modelYamls).map((k) =>
-            k.slice('/p/models/'.length).split('/')[0]
-          )
-        )
-        return Array.from(ids).map((id) => `/p/models/${id}`)
+      const prefix = `${dir}/`
+      const children = new Set<string>()
+
+      for (const key of Object.keys(modelYamls)) {
+        if (!key.startsWith(prefix)) continue
+        const remainder = key.slice(prefix.length)
+        const next = remainder.split('/')[0]
+        if (next.length > 0) children.add(next)
       }
-      return []
+
+      return Array.from(children)
     }),
     fileStat: vi.fn(async (p: string) => ({
-      isDirectory: !p.endsWith('model.yml'),
+      isDirectory:
+        !p.endsWith('model.yml') &&
+        Object.keys(modelYamls).some((key) => key.startsWith(`${p}/`)),
     })),
     writeFileSync: vi.fn(async (p: string, body: string) => {
       writtenFiles[p] = body
@@ -54,6 +58,43 @@ function setupModel(id: string, yaml: Record<string, unknown>) {
 }
 
 describe('generatePreset MTP emission', () => {
+  it('emits cpu-moe settings for router-visible config and per-model overrides', async () => {
+    setupModel('glm', {
+      cpu_moe: false,
+      n_cpu_moe: 2,
+    })
+
+    await generatePreset(
+      '/p',
+      '/jan',
+      { cpu_moe: true, n_cpu_moe: 4 } as any,
+      { supportsMtp: true }
+    )
+
+    const ini = writtenFiles['/p/router.preset.ini']
+    expect(ini).toContain('[*]')
+    expect(ini).toContain('cpu-moe = true')
+    expect(ini).toContain('n-cpu-moe = 4')
+    expect(ini).toContain('[glm]')
+    expect(ini).toContain('cpu-moe = false')
+    expect(ini).toContain('n-cpu-moe = 2')
+  })
+
+  it('walks nested model directories when building the preset', async () => {
+    setupModel('org/glm', {
+      cpu_moe: true,
+      n_cpu_moe: 3,
+    })
+
+    await generatePreset('/p', '/jan', CONFIG, { supportsMtp: true })
+
+    const ini = writtenFiles['/p/router.preset.ini']
+    expect(ini).toContain('[org/glm]')
+    expect(ini).toContain('model = /jan/models/org/glm/model.gguf')
+    expect(ini).toContain('cpu-moe = true')
+    expect(ini).toContain('n-cpu-moe = 3')
+  })
+
   it('emits spec-type = draft-mtp when mtp is on, layers > 0, and backend supports it', async () => {
     setupModel('glm', {
       mtp: true,

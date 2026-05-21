@@ -45,6 +45,7 @@ describe('DefaultModelsService - coverage supplement', () => {
     get: vi.fn(),
     list: vi.fn(),
     updateSettings: vi.fn(),
+    updateModelSettings: vi.fn(),
     import: vi.fn(),
     abortImport: vi.fn(),
     delete: vi.fn(),
@@ -352,6 +353,30 @@ describe('DefaultModelsService - coverage supplement', () => {
       expect(mockEngine.load).toHaveBeenCalledWith(
         'm1',
         { ctx_size: 4096, n_gpu_layers: 33, custom: 'val' },
+        false,
+        false
+      )
+    })
+
+    it('forwards cpu_moe settings unchanged', async () => {
+      mockEngine.getLoadedModels.mockResolvedValue([])
+      mockEngine.load.mockResolvedValue({ id: 'session' })
+
+      const provider = {
+        provider: 'llamacpp',
+        models: [{
+          id: 'm1',
+          settings: {
+            cpu_moe: { key: 'cpu_moe', controller_props: { value: true } },
+            n_cpu_moe: { key: 'n_cpu_moe', controller_props: { value: 4 } },
+          },
+        }],
+      } as any
+
+      await svc.startModel(provider, 'm1')
+      expect(mockEngine.load).toHaveBeenCalledWith(
+        'm1',
+        { cpu_moe: true, n_cpu_moe: 4 },
         false,
         false
       )

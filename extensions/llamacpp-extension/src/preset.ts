@@ -18,6 +18,8 @@ type ModelYaml = ModelConfig & {
   chat_template?: string
   ctx_size?: number
   n_gpu_layers?: number
+  cpu_moe?: boolean
+  n_cpu_moe?: number
   flash_attn?: string
   cache_type_k?: string
   cache_type_v?: string
@@ -86,9 +88,10 @@ export async function generatePreset(
       continue
     }
     for (const child of children) {
+      const childPath = await joinPath([currentDir, child])
       try {
-        const stat = await fs.fileStat(child)
-        if (stat?.isDirectory) stack.push(child)
+        const stat = await fs.fileStat(childPath)
+        if (stat?.isDirectory) stack.push(childPath)
       } catch {
         /* ignore unreadable entries */
       }
@@ -120,6 +123,12 @@ export async function generatePreset(
   }
   if (typeof config.n_gpu_layers === 'number' && config.n_gpu_layers >= 0) {
     lines.push(`n-gpu-layers = ${config.n_gpu_layers}`)
+  }
+  if (typeof config.cpu_moe === 'boolean') {
+    lines.push(`cpu-moe = ${config.cpu_moe}`)
+  }
+  if (typeof config.n_cpu_moe === 'number' && config.n_cpu_moe > 0) {
+    lines.push(`n-cpu-moe = ${config.n_cpu_moe}`)
   }
   if (
     typeof config.flash_attn === 'string' &&
@@ -173,6 +182,12 @@ export async function generatePreset(
     }
     if (typeof mc.n_gpu_layers === 'number' && mc.n_gpu_layers >= 0) {
       lines.push(`n-gpu-layers = ${mc.n_gpu_layers}`)
+    }
+    if (typeof mc.cpu_moe === 'boolean') {
+      lines.push(`cpu-moe = ${mc.cpu_moe}`)
+    }
+    if (typeof mc.n_cpu_moe === 'number' && mc.n_cpu_moe > 0) {
+      lines.push(`n-cpu-moe = ${mc.n_cpu_moe}`)
     }
     if (
       typeof mc.flash_attn === 'string' &&

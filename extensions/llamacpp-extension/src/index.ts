@@ -2054,9 +2054,9 @@ export default class llamacpp_extension extends AIEngine {
       return this.loadingModels.get(modelId)!
     }
 
-    // Persist model-config settings (ctx_size, n_gpu_layers) to model.yml so the
-    // router preset picks them up. If anything changed, restart the router to
-    // regenerate the preset before loading.
+    // Persist model-config settings that affect router preset generation to
+    // model.yml so the router picks them up. If anything changed, restart the
+    // router to regenerate the preset before loading.
     if (overrideSettings) {
       const changed = await this.patchModelYml(modelId, overrideSettings)
       if (changed) {
@@ -2077,8 +2077,8 @@ export default class llamacpp_extension extends AIEngine {
   /**
    * Writes model-config-relevant settings from `overrides` into the model's
    * `model.yml`. Only keys that actually affect preset generation are
-   * considered (ctx_size, n_gpu_layers). Returns `true` when the file was
-   * changed so the caller can decide whether to restart the router.
+   * considered. Returns `true` when the file was changed so the caller can
+   * decide whether to restart the router.
    */
   private async patchModelYml(
     modelId: string,
@@ -2101,6 +2101,22 @@ export default class llamacpp_extension extends AIEngine {
 
       let changed = false
       const patch: Record<string, unknown> = { ...current }
+      const parseIntegerOverride = (value: unknown): number | null => {
+        if (typeof value === 'number' && Number.isInteger(value)) return value
+        if (typeof value === 'string' && value.trim().length > 0) {
+          const parsed = Number(value)
+          if (Number.isInteger(parsed)) return parsed
+        }
+        return null
+      }
+      const parseBooleanOverride = (value: unknown): boolean | null => {
+        if (typeof value === 'boolean') return value
+        if (typeof value === 'string') {
+          if (value === 'true') return true
+          if (value === 'false') return false
+        }
+        return null
+      }
 
       // ctx_size: positive number → set; empty / 0 → remove (let router auto-fit)
       if ('ctx_size' in overrides) {
@@ -2118,13 +2134,30 @@ export default class llamacpp_extension extends AIEngine {
 
       // n_gpu_layers: any integer is valid (-1 = all, 0 = CPU, N = partial)
       if ('n_gpu_layers' in overrides) {
-        const newVal = overrides.n_gpu_layers
-        if (
-          typeof newVal === 'number' &&
-          Number.isInteger(newVal) &&
-          newVal !== current.n_gpu_layers
-        ) {
+        const newVal = parseIntegerOverride(overrides.n_gpu_layers)
+        if (newVal !== null && newVal !== current.n_gpu_layers) {
           patch.n_gpu_layers = newVal
+          changed = true
+        }
+      }
+
+      if ('cpu_moe' in overrides) {
+        const newVal = parseBooleanOverride(overrides.cpu_moe)
+        if (newVal !== null && newVal !== current.cpu_moe) {
+          patch.cpu_moe = newVal
+          changed = true
+        }
+      }
+
+      if ('n_cpu_moe' in overrides) {
+        const newVal = parseIntegerOverride(overrides.n_cpu_moe)
+        const oldVal =
+          typeof current.n_cpu_moe === 'number' ? current.n_cpu_moe : undefined
+        if (newVal !== null && newVal > 0 && newVal !== oldVal) {
+          patch.n_cpu_moe = newVal
+          changed = true
+        } else if ((newVal === 0 || newVal === null) && 'n_cpu_moe' in current) {
+          delete patch.n_cpu_moe
           changed = true
         }
       }
@@ -2133,7 +2166,7 @@ export default class llamacpp_extension extends AIEngine {
 
       await invoke<void>('write_yaml', { data: patch, savePath: modelYmlPath })
       logger.info(
-        `Patched model.yml for ${modelId}: ctx_size=${patch.ctx_size ?? 'unset'}, n_gpu_layers=${patch.n_gpu_layers ?? 'unset'}`
+        `Patched model.yml for ${modelId}: ctx_size=${patch.ctx_size ?? 'unset'}, n_gpu_layers=${patch.n_gpu_layers ?? 'unset'}, cpu_moe=${patch.cpu_moe ?? 'unset'}, n_cpu_moe=${patch.n_cpu_moe ?? 'unset'}`
       )
       return true
     } catch (e) {
@@ -2607,6 +2640,50 @@ export default class llamacpp_extension extends AIEngine {
       await this.startRouter()
     } catch (e) {
       logger.warn(`Failed to restart router after MTP update for ${modelId}`, e)
+    }
+  }
+
+  async updateModelSettings(
+    modelId: string,
+    settings: Record<
+      string,
+      { controller_props?: { value?: unknown } | undefined } | undefined
+    >
+  ): Promise<void> {
+    const overrides: Partial<LlamacppConfig> = {}
+    const getValue = (key: string) => settings[key]?.controller_props?.value
+
+    if ('ctx_len' in settings) {
+      overrides.ctx_size = getValue('ctx_len') as LlamacppConfig['ctx_size']
+    }
+    if ('ngl' in settings) {
+      overrides.n_gpu_layers = getValue('ngl') as LlamacppConfig['n_gpu_layers']
+    }
+    if ('chat_template' in settings) {
+      overrides.chat_template = getValue('chat_template') as LlamacppConfig['chat_template']
+    }
+    if ('offload_mmproj' in settings) {
+      overrides.offload_mmproj = getValue('offload_mmproj') as LlamacppConfig['offload_mmproj']
+    }
+    if ('batch_size' in settings) {
+      overrides.batch_size = getValue('batch_size') as LlamacppConfig['batch_size']
+    }
+    if ('cpu_moe' in settings) {
+      overrides.cpu_moe = getValue('cpu_moe') as LlamacppConfig['cpu_moe']
+    }
+    if ('n_cpu_moe' in settings) {
+      overrides.n_cpu_moe = getValue('n_cpu_moe') as LlamacppConfig['n_cpu_moe']
+    }
+    if ('reasoning' in settings) {
+      overrides.reasoning = getValue('reasoning') as LlamacppConfig['reasoning']
+    }
+
+    await this.patchModelYml(modelId, overrides)
+
+    try {
+      await this.startRouter()
+    } catch (e) {
+      logger.warn(`Failed to restart router after model settings update for ${modelId}`, e)
     }
   }
 

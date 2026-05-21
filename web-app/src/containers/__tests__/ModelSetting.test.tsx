@@ -6,6 +6,16 @@ import { useModelProvider } from '@/hooks/useModelProvider'
 import { act } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
+const { mockModelsService } = vi.hoisted(() => ({
+  mockModelsService: {
+    getMtpInfo: vi.fn(() => Promise.resolve({ mtp_layers: 0, mtp: false })),
+    updateMtpSettings: vi.fn(() => Promise.resolve()),
+    updateModel: vi.fn(() => Promise.resolve()),
+    stopModel: vi.fn(() => Promise.resolve()),
+    getActiveModels: vi.fn(() => Promise.resolve([])),
+  },
+}))
+
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('@/hooks/useModelProvider', () => ({
@@ -14,10 +24,7 @@ vi.mock('@/hooks/useModelProvider', () => ({
 
 vi.mock('@/hooks/useServiceHub', () => ({
   useServiceHub: vi.fn(() => ({
-    models: () => ({
-      stopModel: vi.fn(() => Promise.resolve()),
-      getActiveModels: vi.fn(() => Promise.resolve([])),
-    }),
+    models: () => mockModelsService,
   })),
 }))
 
@@ -256,6 +263,39 @@ describe('ModelSetting - speculative decoding', () => {
       expect(updateProvider).toHaveBeenCalledWith(
         'llamacpp',
         expect.objectContaining({ models: expect.any(Array) })
+      )
+    })
+
+    it('persists cpu_moe changes through the models service', () => {
+      const model = makeLlamacppModel('running-model.gguf', {
+        cpu_moe: {
+          key: 'cpu_moe',
+          title: 'CPU MoE',
+          description: 'Keep MoE weights on CPU',
+          controller_type: 'switch',
+          controller_props: { value: false },
+        },
+      })
+      const provider = makeLlamacppProvider([model])
+
+      vi.mocked(useModelProvider).mockReturnValue({
+        updateProvider,
+        providers: [provider],
+      } as any)
+
+      render(<ModelSetting model={model} provider={provider} />)
+
+      fireEvent.click(screen.getByTestId('change-CPU MoE'))
+
+      expect(mockModelsService.updateModel).toHaveBeenCalledWith(
+        'running-model.gguf',
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            cpu_moe: expect.objectContaining({
+              controller_props: expect.objectContaining({ value: 'new-value' }),
+            }),
+          }),
+        })
       )
     })
 

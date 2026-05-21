@@ -25,7 +25,6 @@ import { useEffect, useMemo, useCallback, useState } from 'react'
 import { useModelProvider } from '@/hooks/useModelProvider'
 import { useDownloadStore } from '@/hooks/useDownloadStore'
 import { useServiceHub } from '@/hooks/useServiceHub'
-import type { DownloadProgressProps } from '@/hooks/useDownloadStore'
 import type { CatalogModel, ModelQuant } from '@/services/models/types'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
@@ -41,7 +40,6 @@ import { useModelScore } from '@/hooks/useModelScores'
 import {
   FIT_LEVEL_BADGE_VARIANTS,
   FIT_LEVEL_TRANSLATION_KEYS,
-  getVariantDisplayName,
   isBestQuantVariant,
 } from '../../utils/scoreUtils'
 
@@ -120,11 +118,6 @@ function HubModelDetailContent() {
   const [readmeContent, setReadmeContent] = useState<string>('')
   const [isLoadingReadme, setIsLoadingReadme] = useState(false)
 
-  // State for model support status
-  const [modelSupportStatus, setModelSupportStatus] = useState<
-    Record<string, 'RED' | 'YELLOW' | 'GREEN' | 'LOADING' | 'GREY'>
-  >({})
-  
   useEffect(() => {
     fetchSources()
   }, [fetchSources])
@@ -196,43 +189,6 @@ function HubModelDetailContent() {
       return `${years} year${years > 1 ? 's' : ''} ago`
     }
   }
-
-  // Check model support function
-  const checkModelSupport = useCallback(
-    async (variant: ModelQuant) => {
-      const modelKey = variant.model_id
-
-      // Don't check again if already checking or checked
-      if (modelSupportStatus[modelKey]) {
-        return
-      }
-
-      // Set loading state
-      setModelSupportStatus((prev) => ({
-        ...prev,
-        [modelKey]: 'LOADING',
-      }))
-
-      try {
-        // Use the HuggingFace path for the model
-        const modelPath = variant.path
-        const supported = await serviceHub
-          .models()
-          .isModelSupported(modelPath, 8192)
-        setModelSupportStatus((prev) => ({
-          ...prev,
-          [modelKey]: supported,
-        }))
-      } catch (error) {
-        console.error('Error checking model support:', error)
-        setModelSupportStatus((prev) => ({
-          ...prev,
-          [modelKey]: 'RED',
-        }))
-      }
-    },
-    [modelSupportStatus, serviceHub]
-  )
 
   // Extract tags from quants (model variants)
   const tags = useMemo(() => {
@@ -591,8 +547,6 @@ function HubModelDetailContent() {
                                 defaultModelQuantizations={
                                   DEFAULT_MODEL_QUANTIZATIONS
                                 }
-                                modelSupportStatus={modelSupportStatus}
-                                onCheckModelSupport={checkModelSupport}
                               />
                             </td>
                             <td className="py-3 px-2 text-right ml-auto">

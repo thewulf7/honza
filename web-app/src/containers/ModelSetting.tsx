@@ -56,6 +56,45 @@ export function ModelSetting({
       })
   }, 500)
 
+  const draftModelCandidates = useMemo(
+    () =>
+      providers
+        .filter((p) => p.provider === 'llamacpp')
+        .flatMap((p) => p.models)
+        .filter(
+          (candidate) =>
+            candidate.id !== model.id &&
+            !candidate.settings?.embedding?.controller_props?.value
+        )
+        .map((candidate) => ({
+          value: candidate.id,
+          name: candidate.displayName ?? candidate.id,
+        })),
+    [model.id, providers]
+  )
+
+  const getControllerProps = useCallback(
+    (config: ProviderSetting) => {
+      switch (config.key) {
+        case 'draft_model_id':
+          return {
+            ...config.controller_props,
+            options: [
+              ...(config.controller_props?.options || []),
+              ...draftModelCandidates,
+            ],
+            value: config.controller_props?.value,
+          }
+        default:
+          return {
+            ...config.controller_props,
+            value: config.controller_props?.value,
+          }
+      }
+    },
+    [draftModelCandidates]
+  )
+
   const handleSettingChange = (
     key: string,
     value: string | boolean | number
@@ -78,42 +117,7 @@ export function ModelSetting({
     }
 
     // Find the model index in the provider's models array
-    // All non-embedding llamacpp models except the current one (candidates for draft model)
-    const draftModelCandidates = useMemo(
-      () =>
-        providers
-          .filter((p) => p.provider === 'llamacpp')
-          .flatMap((p) => p.models)
-          .filter(
-            (candidate) =>
-              candidate.id !== model.id &&
-              !candidate.settings?.embedding?.controller_props?.value
-          )
-          .map((candidate) => ({
-            value: candidate.id,
-            name: candidate.displayName ?? candidate.id,
-          })),
-      [model.id, providers]
-    )
-  
-    const getControllerProps = useCallback((config: ProviderSetting) => {
-      switch (config.key) {
-        case 'draft_model_id':
-          return {
-            ...config.controller_props,
-            options: [
-              ...(config.controller_props?.options || []),
-              ...draftModelCandidates,
-            ],
-            value: config.controller_props?.value,
-          }
-        default:
-          return {
-            ...config.controller_props,
-            value: config.controller_props?.value,
-          }
-      }
-    }, [draftModelCandidates])
+    const modelIndex = provider.models.findIndex((entry) => entry.id === model.id)
 
     if (modelIndex !== -1) {
       // Create a copy of the provider's models array
@@ -126,6 +130,15 @@ export function ModelSetting({
       updateProvider(provider.provider, {
         models: updatedModels,
       })
+
+      void serviceHub
+        .models()
+        .updateModel(model.id, {
+          settings: updatedModel.settings,
+        })
+        .catch((error) => {
+          console.error(`Failed to persist settings for model ${model.id}:`, error)
+        })
 
       // Call debounced stopModel only when updating settings that require restart,
       // and only if the model is currently running
@@ -268,10 +281,7 @@ export function ModelSetting({
                     title={config.title}
                     description={config.description}
                     controllerType={config.controller_type}
-                    controllerProps={{
-                      ...config.controller_props,
-                      value: config.controller_props?.value,
-                    }}
+                    controllerProps={getControllerProps(config)}
                     onChange={(newValue) => handleSettingChange(key, newValue)}
                   />
                 </div>

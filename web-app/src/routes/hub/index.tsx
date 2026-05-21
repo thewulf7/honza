@@ -27,9 +27,7 @@ import {
   IconFileCode,
   IconEye,
   IconSearch,
-  IconRocket,
   IconTool,
-  IconBrandSpeedtest,
 } from '@tabler/icons-react'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -44,7 +42,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
 import { useServiceHub } from '@/hooks/useServiceHub'
 import type { CatalogModel, ModelQuant } from '@/services/models/types'
 import HeaderPage from '@/containers/HeaderPage'
@@ -60,11 +57,6 @@ import { DEFAULT_MODEL_QUANTIZATIONS } from '@/constants/models'
 import { Button } from '@/components/ui/button'
 import { RenderMarkdown } from '@/containers/RenderMarkdown'
 import { useModelScore } from '@/hooks/useModelScores'
-import { selectBestGgufVariant } from '@/lib/modelQuantization'
-import {
-  FIT_LEVEL_BADGE_VARIANTS,
-  FIT_LEVEL_TRANSLATION_KEYS,
-} from '../../utils/scoreUtils'
 
 type SearchParams = {
   repo: string
@@ -288,6 +280,12 @@ function HubContent() {
           measureElement: (el: HTMLElement) => el.getBoundingClientRect().height,
         }
       : { count: 0, getScrollElement: () => null, estimateSize: () => 0 }
+  )
+
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const visibleIndices = useMemo(
+    () => virtualItems.map((virtualItem) => virtualItem.index).join(','),
+    [virtualItems]
   )
 
   useEffect(() => {

@@ -285,6 +285,105 @@ describe('llamacpp_extension', () => {
 
       expect(result).toEqual(expectedSession)
     })
+
+    it('persists cpu_moe overrides from UI-shaped settings into model.yml', async () => {
+      const { joinPath, fs } = await import('@janhq/core')
+      const { invoke } = await import('@tauri-apps/api/core')
+      const apiModule = await import('@janhq/tauri-plugin-llamacpp-api')
+
+      extension['providerPath'] = '/path/to/jan/llamacpp'
+
+      vi.mocked(joinPath).mockImplementation((paths) => Promise.resolve(paths.join('/')))
+      vi.mocked(fs.existsSync).mockResolvedValue(true)
+
+      const expectedSession = {
+        model_id: 'test-model',
+        pid: 123,
+        port: 3000,
+        api_key: 'test-api-key',
+      }
+      vi.mocked(apiModule.loadLlamaModel).mockResolvedValue(expectedSession as any)
+
+      vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
+        switch (cmd) {
+          case 'read_yaml':
+            return {
+              model_path: 'models/test-model/model.gguf',
+              n_cpu_moe: 2,
+            }
+          case 'write_yaml':
+            return undefined
+          case 'plugin:llamacpp|find_session_by_model':
+            return null
+          case 'plugin:llamacpp|get_router_info':
+            return { port: 4000, api_key: 'router-key', pid: 999 }
+          case 'plugin:llamacpp|load_llama_model':
+            return expectedSession
+          default:
+            return undefined
+        }
+      })
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ status: 'ok' }),
+      })
+
+      await extension.load(
+        'test-model',
+        { cpu_moe: true, n_cpu_moe: '4', n_gpu_layers: '12' } as any
+      )
+
+      expect(invoke).toHaveBeenCalledWith('write_yaml', {
+        data: expect.objectContaining({
+          model_path: 'models/test-model/model.gguf',
+          cpu_moe: true,
+          n_cpu_moe: 4,
+          n_gpu_layers: 12,
+        }),
+        savePath: '/path/to/jan/llamacpp/models/test-model/model.yml',
+      })
+    })
+
+    it('persists cpu_moe settings updates from the model settings UI', async () => {
+      const { joinPath, fs } = await import('@janhq/core')
+      const { invoke } = await import('@tauri-apps/api/core')
+
+      extension['providerPath'] = '/path/to/jan/llamacpp'
+
+      vi.mocked(joinPath).mockImplementation((paths) => Promise.resolve(paths.join('/')))
+      vi.mocked(fs.existsSync).mockResolvedValue(true)
+      vi.spyOn(extension as any, 'startRouter').mockResolvedValue(undefined)
+
+      vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+        if (cmd === 'read_yaml') {
+          return {
+            model_path: 'models/test-model/model.gguf',
+            cpu_moe: false,
+          }
+        }
+        return undefined
+      })
+
+      await extension.updateModelSettings('test-model', {
+        cpu_moe: {
+          controller_props: { value: true },
+        },
+        n_cpu_moe: {
+          controller_props: { value: '4' },
+        },
+      })
+
+      expect(invoke).toHaveBeenCalledWith('write_yaml', {
+        data: expect.objectContaining({
+          model_path: 'models/test-model/model.gguf',
+          cpu_moe: true,
+          n_cpu_moe: 4,
+        }),
+        savePath: '/path/to/jan/llamacpp/models/test-model/model.yml',
+      })
+      expect(extension['startRouter']).toHaveBeenCalled()
+    })
   })
 
   describe('unload', () => {
