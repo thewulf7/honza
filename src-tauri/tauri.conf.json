@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Jan",
+  "productName": "Buro",
   "version": "13.0.0",
-  "identifier": "jan.ai.app",
+  "identifier": "ai.buro.app",
   "build": {
     "frontendDist": "../web-app/dist",
     "devUrl": "http://localhost:1420",
