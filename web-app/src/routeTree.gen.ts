@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SystemMonitorRouteImport } from './routes/system-monitor'
 import { Route as LogsRouteImport } from './routes/logs'
+import { Route as CodexAgentRouteImport } from './routes/codex-agent'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as HubIndexRouteImport } from './routes/hub/index'
 import { Route as ThreadsThreadIdRouteImport } from './routes/threads/$threadId'
@@ -41,6 +42,11 @@ const SystemMonitorRoute = SystemMonitorRouteImport.update({
 const LogsRoute = LogsRouteImport.update({
   id: '/logs',
   path: '/logs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CodexAgentRoute = CodexAgentRouteImport.update({
+  id: '/codex-agent',
+  path: '/codex-agent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -152,6 +158,7 @@ const SettingsProvidersProviderNameRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/codex-agent': typeof CodexAgentRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
   '/hub/$modelId': typeof HubModelIdRoute
@@ -177,6 +184,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/codex-agent': typeof CodexAgentRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
   '/hub/$modelId': typeof HubModelIdRoute
@@ -203,6 +211,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/codex-agent': typeof CodexAgentRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
   '/hub/$modelId': typeof HubModelIdRoute
@@ -230,6 +239,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/codex-agent'
     | '/logs'
     | '/system-monitor'
     | '/hub/$modelId'
@@ -255,6 +265,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/codex-agent'
     | '/logs'
     | '/system-monitor'
     | '/hub/$modelId'
@@ -280,6 +291,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/codex-agent'
     | '/logs'
     | '/system-monitor'
     | '/hub/$modelId'
@@ -306,6 +318,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CodexAgentRoute: typeof CodexAgentRoute
   LogsRoute: typeof LogsRoute
   SystemMonitorRoute: typeof SystemMonitorRoute
   HubModelIdRoute: typeof HubModelIdRoute
@@ -344,6 +357,13 @@ declare module '@tanstack/react-router' {
       path: '/logs'
       fullPath: '/logs'
       preLoaderRoute: typeof LogsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/codex-agent': {
+      id: '/codex-agent'
+      path: '/codex-agent'
+      fullPath: '/codex-agent'
+      preLoaderRoute: typeof CodexAgentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -498,6 +518,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CodexAgentRoute: CodexAgentRoute,
   LogsRoute: LogsRoute,
   SystemMonitorRoute: SystemMonitorRoute,
   HubModelIdRoute: HubModelIdRoute,

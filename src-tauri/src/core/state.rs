@@ -63,6 +63,9 @@ pub struct AppState {
     pub provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
     /// Wakes up MCP monitors to trigger an immediate health check + reconnect
     pub mcp_reconnect_notify: Arc<Notify>,
+    /// Cancellation sender for the currently-running `codex_run_turn`.  A new
+    /// sender is installed at the start of each turn and cleared when it ends.
+    pub codex_cancel: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl Default for AppState {
@@ -81,6 +84,7 @@ impl Default for AppState {
             mcp_server_pids: Default::default(),
             provider_configs: Default::default(),
             mcp_reconnect_notify: Arc::new(Notify::new()),
+            codex_cancel: Default::default(),
         }
     }
 }

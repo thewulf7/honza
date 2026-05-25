@@ -2,12 +2,15 @@ import { useCallback, useState } from 'react'
 
 export interface CodexSettings {
   model: string | null
+  /** Names of MCP servers that were last written to Codex's config.toml by Jan. */
+  mcpServerNames: string[]
 }
 
 const STORAGE_KEY = 'codex-helper-settings'
 
 const defaultSettings: CodexSettings = {
   model: null,
+  mcpServerNames: [],
 }
 
 const loadFromStorage = (): CodexSettings => {
@@ -20,6 +23,7 @@ const loadFromStorage = (): CodexSettings => {
       if (typeof parsed === 'object' && parsed !== null && 'model' in parsed) {
         return {
           model: parsed.model ?? null,
+          mcpServerNames: Array.isArray(parsed.mcpServerNames) ? parsed.mcpServerNames : [],
         }
       }
     }
@@ -49,6 +53,14 @@ export function useCodexSettings() {
     })
   }, [saveToStorage])
 
+  const setMcpServerNames = useCallback((mcpServerNames: string[]) => {
+    setSettings((prev) => {
+      const next = { ...prev, mcpServerNames }
+      saveToStorage(next)
+      return next
+    })
+  }, [saveToStorage])
+
   const clearSettings = useCallback(() => {
     setSettings(defaultSettings)
     saveToStorage(defaultSettings)
@@ -57,6 +69,7 @@ export function useCodexSettings() {
   return {
     settings,
     setModel,
+    setMcpServerNames,
     clearSettings,
   }
 }

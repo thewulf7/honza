@@ -1,7 +1,7 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
-import { IconTerminal2 } from '@tabler/icons-react'
+import { IconTerminal2, IconRobot } from '@tabler/icons-react'
 import { toast } from 'sonner'
 
 import { route } from '@/constants/routes'
@@ -15,6 +15,7 @@ import { useAppState } from '@/hooks/useAppState'
 import { useModelProvider } from '@/hooks/useModelProvider'
 import { useServiceHub } from '@/hooks/useServiceHub'
 import { useCodexSettings } from '@/hooks/useCodexSettings'
+import { useMCPServers } from '@/hooks/useMCPServers'
 import { getModelToStart } from '@/utils/getModelToStart'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,6 +24,7 @@ export const Route = createFileRoute(route.settings.codex as any)({
 })
 
 function CodexIntegration() {
+  const navigate = useNavigate()
   const serviceHub = useServiceHub()
   const {
     corsEnabled,
@@ -40,7 +42,8 @@ function CodexIntegration() {
   const { providers, selectedModel, selectedProvider, getProviderByName } =
     useModelProvider()
   const setActiveModels = useAppState((state) => state.setActiveModels)
-  const { settings, setModel, clearSettings } = useCodexSettings()
+  const { settings, setModel, setMcpServerNames, clearSettings } = useCodexSettings()
+  const { mcpServers } = useMCPServers()
   const [isSaving, setIsSaving] = useState(false)
 
   const ensureServerReady = async (): Promise<string | null> => {
@@ -110,14 +113,42 @@ function CodexIntegration() {
       }
 
       const targetModel = await ensureServerReady()
+      const modelObj = providers
+        .flatMap((p) => p.models)
+        .find((m) => m.id === targetModel)
+      const ctxSetting = modelObj?.settings?.['max_context_tokens']?.controller_props?.value
+      const contextWindow = typeof ctxSetting === 'number' && ctxSetting > 0 ? ctxSetting : null
+
+      // Collect active MCP servers from Jan to forward to Codex.
+      // Env variable *values* are intentionally omitted — Codex's RawMcpServerConfig
+      // does not support key=value env entries; only env var *names* (as references) are allowed.
+      const mcpServersToSync: Record<string, Record<string, unknown>> = {}
+      const syncedMcpNames: string[] = []
+      for (const [name, cfg] of Object.entries(mcpServers)) {
+        if (cfg.active === false) continue
+        const entry: Record<string, unknown> = {}
+        if (cfg.command) entry.command = cfg.command
+        if (cfg.args?.length) entry.args = cfg.args
+        if (cfg.url) entry.url = cfg.url
+        // Only include entries that have enough data to be usable by Codex
+        if (entry.command || entry.url) {
+          mcpServersToSync[name] = entry
+          syncedMcpNames.push(name)
+        }
+      }
+
       await invoke('write_codex_config', {
         baseUrl: `http://${serverHost}:${serverPort}${apiPrefix}`,
         apiKey: apiKey || null,
         model: targetModel,
+        contextWindow,
+        mcpServers: mcpServersToSync,
+        prevMcpServerNames: settings.mcpServerNames,
       })
       if (!settings.model && targetModel) {
         setModel(targetModel)
       }
+      setMcpServerNames(syncedMcpNames)
       toast.success('Codex configured to use Jan via its user config.toml')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -133,6 +164,7 @@ function CodexIntegration() {
     try {
       await invoke('clear_codex_config', {
         model: settings.model,
+        mcpServerNames: settings.mcpServerNames,
       })
       clearSettings()
       toast.success('Codex settings cleared')
@@ -183,6 +215,15 @@ function CodexIntegration() {
         />
         <div className="flex mt-2 justify-end gap-2 border-t pt-4">
           <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => navigate({ to: route.codexAgent })}
+            >
+              <IconRobot size={14} />
+              Run Agent
+            </Button>
             <Button size="sm" variant="outline" onClick={handleReset}>
               Reset
             </Button>

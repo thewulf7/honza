@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_llamacpp::cleanup_llama_processes;
-use toml_edit::{value, DocumentMut, Item, Table};
+use toml_edit::{value, Array, DocumentMut, Item, Table, Value as TomlValue};
 
 use crate::core::app::commands::{
     default_data_folder_path, get_jan_data_folder_path, update_app_configuration,
@@ -781,6 +781,43 @@ fn codex_provider_table(base_url: &str, api_key: Option<&str>) -> Table {
     provider
 }
 
+/// Converts a single JSON object (one MCP server entry from Jan) into a TOML table
+/// containing only the fields that Codex's `RawMcpServerConfig` accepts.
+/// Fields like `env` values, `active`, `official`, and Jan-internal metadata are dropped.
+fn json_obj_to_codex_mcp_table(config: &serde_json::Value) -> Option<Table> {
+    let obj = config.as_object()?;
+    let mut tbl = Table::new();
+
+    if let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) {
+        if !cmd.is_empty() {
+            tbl["command"] = value(cmd);
+        }
+    }
+    if let Some(args_json) = obj.get("args").and_then(|v| v.as_array()) {
+        let mut arr = Array::new();
+        for arg in args_json {
+            if let Some(s) = arg.as_str() {
+                arr.push(s);
+            }
+        }
+        if !arr.is_empty() {
+            tbl["args"] = Item::Value(TomlValue::Array(arr));
+        }
+    }
+    if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
+        if !url.is_empty() {
+            tbl["url"] = value(url);
+        }
+    }
+
+    // Only export the entry if it has enough information to be usable
+    if tbl.contains_key("command") || tbl.contains_key("url") {
+        Some(tbl)
+    } else {
+        None
+    }
+}
+
 fn load_codex_document(config_path: &std::path::Path) -> Result<DocumentMut, String> {
     if config_path.exists() {
         let content = fs::read_to_string(config_path).map_err(|e| e.to_string())?;
@@ -799,6 +836,15 @@ pub fn write_codex_config(
     base_url: String,
     api_key: Option<String>,
     model: Option<String>,
+    context_window: Option<i64>,
+    // Active MCP servers from Jan to forward into Codex's [mcp_servers] table.
+    // Keyed by server name; each value is a JSON object with at least `command`/`args`
+    // (stdio) or `url` (HTTP). Fields unsupported by Codex (e.g. `env` values,
+    // `active`, `official`) are silently ignored.
+    mcp_servers: Option<serde_json::Value>,
+    // Names of MCP servers written by a previous `write_codex_config` call.
+    // These are removed first so stale entries don't accumulate.
+    prev_mcp_server_names: Option<Vec<String>>,
 ) -> Result<(), String> {
     let config_path = codex_config_path()?;
     let config_dir = config_path
@@ -809,8 +855,14 @@ pub fn write_codex_config(
 
     let mut document = load_codex_document(&config_path)?;
     document["profile"] = value(CODEX_JAN_PROFILE);
-    document["model_context_window"] = value(CODEX_DEFAULT_MODEL_CONTEXT_WINDOW);
-    document["model_auto_compact_token_limit"] = value(CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT);
+
+    // Always clear stale context window values first, then re-set if we have a valid one.
+    document.remove("model_context_window");
+    document.remove("model_auto_compact_token_limit");
+    if let Some(w) = context_window.filter(|&w| w > 0) {
+        document["model_context_window"] = value(w);
+        document["model_auto_compact_token_limit"] = value((w * 9) / 10);
+    }
 
     if !document["model_providers"].is_table() {
         document["model_providers"] = Item::Table(Table::new());
@@ -831,19 +883,58 @@ pub fn write_codex_config(
 
     let mut jan_profile = Table::new();
     jan_profile["model_provider"] = value(CODEX_JAN_PROFILE);
-    jan_profile["model"] = value(
-        model
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_default(),
-    );
+    // Only write the model key when a model is actually selected; an empty string
+    // would cause Codex to use "" as the model name and fail.
+    if let Some(m) = model.filter(|v| !v.trim().is_empty()) {
+        jan_profile["model"] = value(m);
+    }
+    // Sensible defaults for local-model coding sessions.
+    jan_profile["approval_policy"] = value("on-request");
+    jan_profile["sandbox_mode"] = value("workspace-write");
     profiles[CODEX_JAN_PROFILE] = Item::Table(jan_profile);
+
+    // --- MCP servers ---
+    // First remove any servers from the previous save that are no longer active.
+    if let Some(prev_names) = prev_mcp_server_names {
+        if let Some(mcp_tbl) = document["mcp_servers"].as_table_mut() {
+            for name in &prev_names {
+                mcp_tbl.remove(name.as_str());
+            }
+            if mcp_tbl.is_empty() {
+                document.remove("mcp_servers");
+            }
+        }
+    }
+    // Then write the current active servers.
+    if let Some(serde_json::Value::Object(servers_map)) = mcp_servers {
+        if !servers_map.is_empty() {
+            if !document["mcp_servers"].is_table() {
+                let mut implicit = Table::new();
+                implicit.set_implicit(true);
+                document["mcp_servers"] = Item::Table(implicit);
+            }
+            let mcp_tbl = document["mcp_servers"]
+                .as_table_mut()
+                .ok_or_else(|| "Failed to initialize mcp_servers table".to_string())?;
+            for (name, config) in &servers_map {
+                if let Some(server_tbl) = json_obj_to_codex_mcp_table(config) {
+                    mcp_tbl[name.as_str()] = Item::Table(server_tbl);
+                }
+            }
+        }
+    }
 
     fs::write(&config_path, document.to_string()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
+pub fn clear_codex_config(
+    model: Option<String>,
+    // Names of MCP servers that `write_codex_config` added to `[mcp_servers]`.
+    // These entries are removed unconditionally when the user resets the integration.
+    mcp_server_names: Option<Vec<String>>,
+) -> Result<(), String> {
     let config_path = codex_config_path()?;
     if !config_path.exists() {
         return Ok(());
@@ -855,16 +946,6 @@ pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
         document.remove("profile");
     }
 
-    if document["model_context_window"].as_integer() == Some(CODEX_DEFAULT_MODEL_CONTEXT_WINDOW) {
-        document.remove("model_context_window");
-    }
-
-    if document["model_auto_compact_token_limit"].as_integer()
-        == Some(CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT)
-    {
-        document.remove("model_auto_compact_token_limit");
-    }
-
     if let Some(providers) = document["model_providers"].as_table_mut() {
         providers.remove(CODEX_JAN_PROFILE);
         if providers.is_empty() {
@@ -872,6 +953,7 @@ pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
         }
     }
 
+    let mut removed_jan_profile = false;
     if let Some(profiles) = document["profiles"].as_table_mut() {
         let should_remove = match profiles.get(CODEX_JAN_PROFILE) {
             Some(Item::Table(profile)) => {
@@ -880,7 +962,11 @@ pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
                         Some(selected_model) if !selected_model.trim().is_empty() => {
                             profile["model"].as_str() == Some(selected_model)
                         }
-                        _ => profile["model"].as_str() == Some("")
+                        // Handle both old behavior (model = "") and new behavior (key absent)
+                        _ => {
+                            let saved_model = profile["model"].as_str();
+                            saved_model.is_none() || saved_model == Some("")
+                        }
                     }
             }
             _ => false,
@@ -888,10 +974,32 @@ pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
 
         if should_remove {
             profiles.remove(CODEX_JAN_PROFILE);
+            removed_jan_profile = true;
         }
 
         if profiles.is_empty() {
             document.remove("profiles");
+        }
+    }
+
+    // Remove context window keys only when Jan's profile was successfully removed,
+    // since Jan owns those keys and removing them unconditionally could affect
+    // other profiles the user has set up.
+    if removed_jan_profile {
+        document.remove("model_context_window");
+        document.remove("model_auto_compact_token_limit");
+    }
+
+    // Remove MCP servers that Jan wrote, regardless of profile match status.
+    // The user explicitly clicked Reset, so all Jan-managed entries should be cleaned up.
+    if let Some(names) = mcp_server_names {
+        if let Some(mcp_tbl) = document["mcp_servers"].as_table_mut() {
+            for name in &names {
+                mcp_tbl.remove(name.as_str());
+            }
+            if mcp_tbl.is_empty() {
+                document.remove("mcp_servers");
+            }
         }
     }
 
