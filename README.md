@@ -94,6 +94,7 @@ Download from [jan.ai](https://jan.ai/) or [GitHub Releases](https://github.com/
 - **Custom Assistants**: Create specialized AI assistants for your tasks
 - **OpenAI-Compatible API**: Local server at `localhost:1337` for other applications
 - **Model Context Protocol**: MCP integration for agentic capabilities
+- **AI Code Agents**: Run OpenAI Codex CLI and Anthropic Claude Code CLI directly from the app, with streaming output and persistent sessions
 - **Privacy First**: Everything runs locally when you want it to
 
 ## Build from Source

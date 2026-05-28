@@ -41,6 +41,7 @@ import { useProjectDialog } from '@/hooks/useProjectDialog'
 import { useAgentMode } from '@/hooks/useAgentMode'
 import { TEMPORARY_CHAT_ID } from '@/constants/chat'
 import { PlatformShortcuts, ShortcutAction } from '@/lib/shortcuts'
+import { SidebarMode, useSidebarMode } from '@/hooks/useSidebarMode'
 
 type AnimatedIconHandle =
   | SearchIconHandle
@@ -53,6 +54,7 @@ type AnimatedIconHandle =
 type NavMainItem = {
   title: string
   url?: string
+  type?: SidebarMode,
   icon?: LucideIcon | React.ComponentType<{ className?: string }>
   animatedIcon?: React.ForwardRefExoticComponent<
     {
@@ -69,11 +71,12 @@ const getNavMainItems = (
   onNewProject: () => void,
   onSearch: () => void,
   onNewChat: () => void,
-  onJanClaw: () => void
+  onNewAgentChat: () => void
 ): NavMainItem[] => [
   {
     title: 'common:newChat',
     animatedIcon: MessageCircleIcon,
+    type: 'chat',
     onClick: onNewChat,
     shortcut: (
       <KbdGroup className="ml-auto scale-90 gap-0">
@@ -85,9 +88,10 @@ const getNavMainItems = (
     ),
   },
   {
-    title: 'common:newAgentChat',
+    title: 'common:newSession',
     animatedIcon: BotIcon,
-    onClick: onJanClaw,
+    onClick: onNewAgentChat,
+    type: 'agents',
     shortcut: (
       <KbdGroup className="ml-auto scale-90 gap-0">
         <Kbd className="bg-transparent size-3">
@@ -100,6 +104,7 @@ const getNavMainItems = (
   {
     title: 'common:projects.new',
     animatedIcon: FolderPlusIcon,
+    type: 'chat',
     onClick: onNewProject,
     shortcut: (
       <KbdGroup className="ml-auto scale-90 gap-0">
@@ -171,6 +176,7 @@ function NavMainItemWithAnimatedIcon({
 export function NavMain() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const { mode } = useSidebarMode()
   const { addFolder } = useThreadManagement()
   const { open: searchOpen, setOpen: setSearchOpen } = useSearchDialog()
   const { open: projectDialogOpen, setOpen: setProjectDialogOpen } =
@@ -184,9 +190,9 @@ export function NavMain() {
     },
     () => {
       useAgentMode.getState().setAgentMode(TEMPORARY_CHAT_ID, true)
-      navigate({ to: route.home })
+      navigate({ to: route.agent })
     }
-  ).filter((item) => item.title !== 'common:newAgentChat')
+  ).filter((item) => !item.type || item.type === mode)
 
   const handleCreateProject = async (name: string, assistantId?: string) => {
     const newProject = await addFolder(name, assistantId)

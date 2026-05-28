@@ -11,7 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SystemMonitorRouteImport } from './routes/system-monitor'
 import { Route as LogsRouteImport } from './routes/logs'
-import { Route as CodexAgentRouteImport } from './routes/codex-agent'
+import { Route as AgentRouteImport } from './routes/agent'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as HubIndexRouteImport } from './routes/hub/index'
 import { Route as ThreadsThreadIdRouteImport } from './routes/threads/$threadId'
@@ -24,15 +24,15 @@ import { Route as SettingsHttpsProxyRouteImport } from './routes/settings/https-
 import { Route as SettingsHardwareRouteImport } from './routes/settings/hardware'
 import { Route as SettingsGeneralRouteImport } from './routes/settings/general'
 import { Route as SettingsExtensionsRouteImport } from './routes/settings/extensions'
-import { Route as SettingsCodexRouteImport } from './routes/settings/codex'
-import { Route as SettingsClaudeCodeRouteImport } from './routes/settings/claude-code'
 import { Route as SettingsAttachmentsRouteImport } from './routes/settings/attachments'
 import { Route as SettingsAssistantRouteImport } from './routes/settings/assistant'
 import { Route as ProjectProjectIdRouteImport } from './routes/project/$projectId'
 import { Route as LocalApiServerLogsRouteImport } from './routes/local-api-server/logs'
 import { Route as HubModelIdRouteImport } from './routes/hub/$modelId'
 import { Route as SettingsProvidersIndexRouteImport } from './routes/settings/providers/index'
+import { Route as SettingsAgentsIndexRouteImport } from './routes/settings/agents/index'
 import { Route as SettingsProvidersProviderNameRouteImport } from './routes/settings/providers/$providerName'
+import { Route as SettingsAgentsAgentNameRouteImport } from './routes/settings/agents/$agentName'
 
 const SystemMonitorRoute = SystemMonitorRouteImport.update({
   id: '/system-monitor',
@@ -44,9 +44,9 @@ const LogsRoute = LogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => rootRouteImport,
 } as any)
-const CodexAgentRoute = CodexAgentRouteImport.update({
-  id: '/codex-agent',
-  path: '/codex-agent',
+const AgentRoute = AgentRouteImport.update({
+  id: '/agent',
+  path: '/agent',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -109,16 +109,6 @@ const SettingsExtensionsRoute = SettingsExtensionsRouteImport.update({
   path: '/settings/extensions',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsCodexRoute = SettingsCodexRouteImport.update({
-  id: '/settings/codex',
-  path: '/settings/codex',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsClaudeCodeRoute = SettingsClaudeCodeRouteImport.update({
-  id: '/settings/claude-code',
-  path: '/settings/claude-code',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SettingsAttachmentsRoute = SettingsAttachmentsRouteImport.update({
   id: '/settings/attachments',
   path: '/settings/attachments',
@@ -149,16 +139,26 @@ const SettingsProvidersIndexRoute = SettingsProvidersIndexRouteImport.update({
   path: '/settings/providers/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsAgentsIndexRoute = SettingsAgentsIndexRouteImport.update({
+  id: '/settings/agents/',
+  path: '/settings/agents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsProvidersProviderNameRoute =
   SettingsProvidersProviderNameRouteImport.update({
     id: '/settings/providers/$providerName',
     path: '/settings/providers/$providerName',
     getParentRoute: () => rootRouteImport,
   } as any)
+const SettingsAgentsAgentNameRoute = SettingsAgentsAgentNameRouteImport.update({
+  id: '/settings/agents/$agentName',
+  path: '/settings/agents/$agentName',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/codex-agent': typeof CodexAgentRoute
+  '/agent': typeof AgentRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
   '/hub/$modelId': typeof HubModelIdRoute
@@ -166,8 +166,6 @@ export interface FileRoutesByFullPath {
   '/project/$projectId': typeof ProjectProjectIdRoute
   '/settings/assistant': typeof SettingsAssistantRoute
   '/settings/attachments': typeof SettingsAttachmentsRoute
-  '/settings/claude-code': typeof SettingsClaudeCodeRoute
-  '/settings/codex': typeof SettingsCodexRoute
   '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/hardware': typeof SettingsHardwareRoute
@@ -179,12 +177,14 @@ export interface FileRoutesByFullPath {
   '/settings/shortcuts': typeof SettingsShortcutsRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
   '/hub/': typeof HubIndexRoute
+  '/settings/agents/$agentName': typeof SettingsAgentsAgentNameRoute
   '/settings/providers/$providerName': typeof SettingsProvidersProviderNameRoute
+  '/settings/agents/': typeof SettingsAgentsIndexRoute
   '/settings/providers/': typeof SettingsProvidersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/codex-agent': typeof CodexAgentRoute
+  '/agent': typeof AgentRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
   '/hub/$modelId': typeof HubModelIdRoute
@@ -192,8 +192,6 @@ export interface FileRoutesByTo {
   '/project/$projectId': typeof ProjectProjectIdRoute
   '/settings/assistant': typeof SettingsAssistantRoute
   '/settings/attachments': typeof SettingsAttachmentsRoute
-  '/settings/claude-code': typeof SettingsClaudeCodeRoute
-  '/settings/codex': typeof SettingsCodexRoute
   '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/hardware': typeof SettingsHardwareRoute
@@ -205,13 +203,15 @@ export interface FileRoutesByTo {
   '/settings/shortcuts': typeof SettingsShortcutsRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
   '/hub': typeof HubIndexRoute
+  '/settings/agents/$agentName': typeof SettingsAgentsAgentNameRoute
   '/settings/providers/$providerName': typeof SettingsProvidersProviderNameRoute
+  '/settings/agents': typeof SettingsAgentsIndexRoute
   '/settings/providers': typeof SettingsProvidersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/codex-agent': typeof CodexAgentRoute
+  '/agent': typeof AgentRoute
   '/logs': typeof LogsRoute
   '/system-monitor': typeof SystemMonitorRoute
   '/hub/$modelId': typeof HubModelIdRoute
@@ -219,8 +219,6 @@ export interface FileRoutesById {
   '/project/$projectId': typeof ProjectProjectIdRoute
   '/settings/assistant': typeof SettingsAssistantRoute
   '/settings/attachments': typeof SettingsAttachmentsRoute
-  '/settings/claude-code': typeof SettingsClaudeCodeRoute
-  '/settings/codex': typeof SettingsCodexRoute
   '/settings/extensions': typeof SettingsExtensionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/hardware': typeof SettingsHardwareRoute
@@ -232,14 +230,16 @@ export interface FileRoutesById {
   '/settings/shortcuts': typeof SettingsShortcutsRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
   '/hub/': typeof HubIndexRoute
+  '/settings/agents/$agentName': typeof SettingsAgentsAgentNameRoute
   '/settings/providers/$providerName': typeof SettingsProvidersProviderNameRoute
+  '/settings/agents/': typeof SettingsAgentsIndexRoute
   '/settings/providers/': typeof SettingsProvidersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/codex-agent'
+    | '/agent'
     | '/logs'
     | '/system-monitor'
     | '/hub/$modelId'
@@ -247,8 +247,6 @@ export interface FileRouteTypes {
     | '/project/$projectId'
     | '/settings/assistant'
     | '/settings/attachments'
-    | '/settings/claude-code'
-    | '/settings/codex'
     | '/settings/extensions'
     | '/settings/general'
     | '/settings/hardware'
@@ -260,12 +258,14 @@ export interface FileRouteTypes {
     | '/settings/shortcuts'
     | '/threads/$threadId'
     | '/hub/'
+    | '/settings/agents/$agentName'
     | '/settings/providers/$providerName'
+    | '/settings/agents/'
     | '/settings/providers/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/codex-agent'
+    | '/agent'
     | '/logs'
     | '/system-monitor'
     | '/hub/$modelId'
@@ -273,8 +273,6 @@ export interface FileRouteTypes {
     | '/project/$projectId'
     | '/settings/assistant'
     | '/settings/attachments'
-    | '/settings/claude-code'
-    | '/settings/codex'
     | '/settings/extensions'
     | '/settings/general'
     | '/settings/hardware'
@@ -286,12 +284,14 @@ export interface FileRouteTypes {
     | '/settings/shortcuts'
     | '/threads/$threadId'
     | '/hub'
+    | '/settings/agents/$agentName'
     | '/settings/providers/$providerName'
+    | '/settings/agents'
     | '/settings/providers'
   id:
     | '__root__'
     | '/'
-    | '/codex-agent'
+    | '/agent'
     | '/logs'
     | '/system-monitor'
     | '/hub/$modelId'
@@ -299,8 +299,6 @@ export interface FileRouteTypes {
     | '/project/$projectId'
     | '/settings/assistant'
     | '/settings/attachments'
-    | '/settings/claude-code'
-    | '/settings/codex'
     | '/settings/extensions'
     | '/settings/general'
     | '/settings/hardware'
@@ -312,13 +310,15 @@ export interface FileRouteTypes {
     | '/settings/shortcuts'
     | '/threads/$threadId'
     | '/hub/'
+    | '/settings/agents/$agentName'
     | '/settings/providers/$providerName'
+    | '/settings/agents/'
     | '/settings/providers/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  CodexAgentRoute: typeof CodexAgentRoute
+  AgentRoute: typeof AgentRoute
   LogsRoute: typeof LogsRoute
   SystemMonitorRoute: typeof SystemMonitorRoute
   HubModelIdRoute: typeof HubModelIdRoute
@@ -326,8 +326,6 @@ export interface RootRouteChildren {
   ProjectProjectIdRoute: typeof ProjectProjectIdRoute
   SettingsAssistantRoute: typeof SettingsAssistantRoute
   SettingsAttachmentsRoute: typeof SettingsAttachmentsRoute
-  SettingsClaudeCodeRoute: typeof SettingsClaudeCodeRoute
-  SettingsCodexRoute: typeof SettingsCodexRoute
   SettingsExtensionsRoute: typeof SettingsExtensionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsHardwareRoute: typeof SettingsHardwareRoute
@@ -339,7 +337,9 @@ export interface RootRouteChildren {
   SettingsShortcutsRoute: typeof SettingsShortcutsRoute
   ThreadsThreadIdRoute: typeof ThreadsThreadIdRoute
   HubIndexRoute: typeof HubIndexRoute
+  SettingsAgentsAgentNameRoute: typeof SettingsAgentsAgentNameRoute
   SettingsProvidersProviderNameRoute: typeof SettingsProvidersProviderNameRoute
+  SettingsAgentsIndexRoute: typeof SettingsAgentsIndexRoute
   SettingsProvidersIndexRoute: typeof SettingsProvidersIndexRoute
 }
 
@@ -359,11 +359,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LogsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/codex-agent': {
-      id: '/codex-agent'
-      path: '/codex-agent'
-      fullPath: '/codex-agent'
-      preLoaderRoute: typeof CodexAgentRouteImport
+    '/agent': {
+      id: '/agent'
+      path: '/agent'
+      fullPath: '/agent'
+      preLoaderRoute: typeof AgentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -450,20 +450,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsExtensionsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/codex': {
-      id: '/settings/codex'
-      path: '/settings/codex'
-      fullPath: '/settings/codex'
-      preLoaderRoute: typeof SettingsCodexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/claude-code': {
-      id: '/settings/claude-code'
-      path: '/settings/claude-code'
-      fullPath: '/settings/claude-code'
-      preLoaderRoute: typeof SettingsClaudeCodeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/settings/attachments': {
       id: '/settings/attachments'
       path: '/settings/attachments'
@@ -506,6 +492,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsProvidersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/agents/': {
+      id: '/settings/agents/'
+      path: '/settings/agents'
+      fullPath: '/settings/agents/'
+      preLoaderRoute: typeof SettingsAgentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/providers/$providerName': {
       id: '/settings/providers/$providerName'
       path: '/settings/providers/$providerName'
@@ -513,12 +506,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsProvidersProviderNameRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/agents/$agentName': {
+      id: '/settings/agents/$agentName'
+      path: '/settings/agents/$agentName'
+      fullPath: '/settings/agents/$agentName'
+      preLoaderRoute: typeof SettingsAgentsAgentNameRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  CodexAgentRoute: CodexAgentRoute,
+  AgentRoute: AgentRoute,
   LogsRoute: LogsRoute,
   SystemMonitorRoute: SystemMonitorRoute,
   HubModelIdRoute: HubModelIdRoute,
@@ -526,8 +526,6 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectProjectIdRoute: ProjectProjectIdRoute,
   SettingsAssistantRoute: SettingsAssistantRoute,
   SettingsAttachmentsRoute: SettingsAttachmentsRoute,
-  SettingsClaudeCodeRoute: SettingsClaudeCodeRoute,
-  SettingsCodexRoute: SettingsCodexRoute,
   SettingsExtensionsRoute: SettingsExtensionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsHardwareRoute: SettingsHardwareRoute,
@@ -539,7 +537,9 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsShortcutsRoute: SettingsShortcutsRoute,
   ThreadsThreadIdRoute: ThreadsThreadIdRoute,
   HubIndexRoute: HubIndexRoute,
+  SettingsAgentsAgentNameRoute: SettingsAgentsAgentNameRoute,
   SettingsProvidersProviderNameRoute: SettingsProvidersProviderNameRoute,
+  SettingsAgentsIndexRoute: SettingsAgentsIndexRoute,
   SettingsProvidersIndexRoute: SettingsProvidersIndexRoute,
 }
 export const routeTree = rootRouteImport

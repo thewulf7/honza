@@ -1,0 +1,12 @@
+{
+  "welcome": "Hi, how are you?",
+  "description": "What are we building today?",
+  "temporaryChat": "Temporary Chat",
+  "temporaryChatDescription": "Start a temporary conversation that won't be saved to your chat history.",
+  "status": {
+    "empty": "No Chats Found"
+  },
+  "sendMessage": "Send Message",
+  "newConversation": "New Conversation",
+  "clearHistory": "Clear History"
+}

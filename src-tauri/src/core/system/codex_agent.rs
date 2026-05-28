@@ -35,6 +35,10 @@ pub async fn codex_run_turn<R: Runtime>(
     thread_id: Option<String>,
     // Directory Codex should treat as the project root.  Defaults to $HOME.
     working_dir: Option<String>,
+    // Custom path to the `codex` binary (None → search PATH).
+    binary_path: Option<String>,
+    // Custom path to config.toml; its parent dir is passed as CODEX_HOME.
+    config_path: Option<String>,
 ) -> Result<String, String> {
     let mut args = vec!["exec".to_string(), "--experimental-json".to_string()];
 
@@ -52,6 +56,18 @@ pub async fn codex_run_turn<R: Runtime>(
         args.push(current_thread_id.clone());
     }
 
+    // Resolve the binary to invoke.
+    let binary = binary_path
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("codex");
+
+    // Derive CODEX_HOME from the config file path when provided.
+    let codex_home_override: Option<std::path::PathBuf> = config_path
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()));
+
     // Set up a cancellation channel so `codex_stop_turn` can abort the process.
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     {
@@ -59,11 +75,15 @@ pub async fn codex_run_turn<R: Runtime>(
         *guard = Some(cancel_tx);
     }
 
-    let mut child = TokioCommand::new("codex")
-        .args(&args)
+    let mut cmd = TokioCommand::new(binary);
+    cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(home) = codex_home_override {
+        cmd.env("CODEX_HOME", home);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| {
             format!(

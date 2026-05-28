@@ -4,6 +4,10 @@ export interface CodexSettings {
   model: string | null
   /** Names of MCP servers that were last written to Codex's config.toml by Jan. */
   mcpServerNames: string[]
+  /** Custom path to the codex binary (empty → use auto-detected / PATH). */
+  binaryPath: string
+  /** Custom path to config.toml (empty → use platform default ~/.codex/config.toml). */
+  configFilePath: string
 }
 
 const STORAGE_KEY = 'codex-helper-settings'
@@ -11,6 +15,8 @@ const STORAGE_KEY = 'codex-helper-settings'
 const defaultSettings: CodexSettings = {
   model: null,
   mcpServerNames: [],
+  binaryPath: '',
+  configFilePath: '',
 }
 
 const loadFromStorage = (): CodexSettings => {
@@ -24,6 +30,8 @@ const loadFromStorage = (): CodexSettings => {
         return {
           model: parsed.model ?? null,
           mcpServerNames: Array.isArray(parsed.mcpServerNames) ? parsed.mcpServerNames : [],
+          binaryPath: typeof parsed.binaryPath === 'string' ? parsed.binaryPath : '',
+          configFilePath: typeof parsed.configFilePath === 'string' ? parsed.configFilePath : '',
         }
       }
     }
@@ -61,6 +69,22 @@ export function useCodexSettings() {
     })
   }, [saveToStorage])
 
+  const setBinaryPath = useCallback((binaryPath: string) => {
+    setSettings((prev) => {
+      const next = { ...prev, binaryPath }
+      saveToStorage(next)
+      return next
+    })
+  }, [saveToStorage])
+
+  const setConfigFilePath = useCallback((configFilePath: string) => {
+    setSettings((prev) => {
+      const next = { ...prev, configFilePath }
+      saveToStorage(next)
+      return next
+    })
+  }, [saveToStorage])
+
   const clearSettings = useCallback(() => {
     setSettings(defaultSettings)
     saveToStorage(defaultSettings)
@@ -70,6 +94,8 @@ export function useCodexSettings() {
     settings,
     setModel,
     setMcpServerNames,
+    setBinaryPath,
+    setConfigFilePath,
     clearSettings,
   }
 }

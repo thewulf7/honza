@@ -66,6 +66,9 @@ pub struct AppState {
     /// Cancellation sender for the currently-running `codex_run_turn`.  A new
     /// sender is installed at the start of each turn and cleared when it ends.
     pub codex_cancel: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    /// Cancellation sender for the currently-running `claude_run_turn`.  A new
+    /// sender is installed at the start of each turn and cleared when it ends.
+    pub claude_cancel: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl Default for AppState {
@@ -85,6 +88,7 @@ impl Default for AppState {
             provider_configs: Default::default(),
             mcp_reconnect_notify: Arc::new(Notify::new()),
             codex_cancel: Default::default(),
+            claude_cancel: Default::default(),
         }
     }
 }

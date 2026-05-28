@@ -93,7 +93,7 @@ const INITIAL_SESSION: CodexSession = {
  *                  (defaults to `"default"`).  Pass different keys to support
  *                  multiple independent sessions in the same app.
  */
-export function useCodexAgent(agentKey = 'default') {
+export function useCodexAgent(agentKey = 'default', options?: { binaryPath?: string; configFilePath?: string }) {
   const [session, setSession] = useState<CodexSession>(() => ({
     ...INITIAL_SESSION,
     threadId: loadThreadId(agentKey),
@@ -156,6 +156,8 @@ export function useCodexAgent(agentKey = 'default') {
           prompt,
           threadId: session.threadId || null,
           workingDir: workingDir ?? null,
+          binaryPath: options?.binaryPath || null,
+          configPath: options?.configFilePath || null,
         })
 
         // Persist thread ID for future page loads.
