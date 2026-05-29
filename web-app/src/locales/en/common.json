@@ -249,7 +249,9 @@
       "nMin": "Min draft tokens",
       "nMinDescription": "Minimum number of tokens to draft per step. Default 0.",
       "pMin": "Min draft probability",
-      "pMinDescription": "Minimum probability for greedy drafting (0–1). Default 0.75."
+      "pMinDescription": "Minimum probability for greedy drafting (0–1). llama.cpp default 0. Leave blank to use default.",
+      "pSplit": "Split probability",
+      "pSplitDescription": "Stop drafting when token probability drops below this threshold (0–1). llama.cpp default 0.10. Leave blank to use default."
     }
   },
   "dialogs": {

@@ -402,12 +402,13 @@
   {
     "key": "spec_type",
     "title": "Speculative type",
-    "description": "Model-free speculative decoding using token history patterns. Works without a draft model. Can be combined with a draft model. None = disabled. ngram-mod - good for reasoning models. ",
+    "description": "Speculative decoding method applied globally to all models. draft-mtp uses Multi-Token Prediction heads built into the model (requires a model that supports MTP; enable per-model in Model Settings). ngram variants are model-free and work with any model. None = disabled. ngram-mod recommended for reasoning models.",
     "controllerType": "dropdown",
     "controllerProps": {
       "value": "none",
       "options": [
         { "value": "none", "name": "none" },
+        { "value": "draft-mtp", "name": "draft-mtp (MTP)" },
         { "value": "ngram-simple", "name": "ngram-simple" },
         { "value": "ngram-mod", "name": "ngram-mod" },
         { "value": "ngram-cache", "name": "ngram-cache" },

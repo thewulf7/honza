@@ -304,6 +304,7 @@ type MtpInfo = {
   spec_draft_n_max?: number
   spec_draft_n_min?: number
   spec_draft_p_min?: number
+  spec_draft_p_split?: number
 }
 
 function MtpPanel({
@@ -345,6 +346,7 @@ function MtpPanel({
       spec_draft_n_max?: number | null
       spec_draft_n_min?: number | null
       spec_draft_p_min?: number | null
+      spec_draft_p_split?: number | null
     }) => {
       try {
         await serviceHub.models().updateMtpSettings(modelId, patch)
@@ -360,7 +362,7 @@ function MtpPanel({
   const enabled = info.mtp === true && backendSupports
 
   const updateNumber = (
-    key: 'spec_draft_n_max' | 'spec_draft_n_min' | 'spec_draft_p_min',
+    key: 'spec_draft_n_max' | 'spec_draft_n_min' | 'spec_draft_p_min' | 'spec_draft_p_split',
     raw: string
   ) => {
     const trimmed = raw.trim()
@@ -427,12 +429,22 @@ function MtpPanel({
           <NumberRow
             label={t('common:modelSettings.mtp.pMin')}
             description={t('common:modelSettings.mtp.pMinDescription')}
-            placeholder="0.75"
+            placeholder="0"
             value={info.spec_draft_p_min}
             min={0}
             max={1}
             step={0.05}
             onChange={(raw) => updateNumber('spec_draft_p_min', raw)}
+          />
+          <NumberRow
+            label={t('common:modelSettings.mtp.pSplit')}
+            description={t('common:modelSettings.mtp.pSplitDescription')}
+            placeholder="0.10"
+            value={info.spec_draft_p_split}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(raw) => updateNumber('spec_draft_p_split', raw)}
           />
         </>
       )}

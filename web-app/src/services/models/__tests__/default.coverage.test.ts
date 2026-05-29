@@ -446,4 +446,64 @@ describe('DefaultModelsService - coverage supplement', () => {
       expect(result).toBeUndefined()
     })
   })
+
+  // ── getMtpInfo ──
+  describe('getMtpInfo', () => {
+    it('delegates to engine getMtpInfo', async () => {
+      const info = { mtp_layers: 1, mtp: true, spec_draft_n_max: 8, spec_draft_p_split: 0.1 }
+      const engineWithMtp = { ...mockEngine, getMtpInfo: vi.fn().mockResolvedValue(info) }
+      mockEngineManager.get.mockReturnValueOnce(engineWithMtp)
+      const result = await svc.getMtpInfo('model-id')
+      expect(engineWithMtp.getMtpInfo).toHaveBeenCalledWith('model-id')
+      expect(result).toEqual(info)
+    })
+
+    it('returns zero-state when engine has no getMtpInfo', async () => {
+      mockEngineManager.get.mockReturnValueOnce(mockEngine)
+      const result = await svc.getMtpInfo('model-id')
+      expect(result).toEqual({ mtp_layers: 0, mtp: false })
+    })
+
+    it('returns zero-state when engine is missing', async () => {
+      mockEngineManager.get.mockReturnValueOnce(undefined)
+      const result = await svc.getMtpInfo('model-id')
+      expect(result).toEqual({ mtp_layers: 0, mtp: false })
+    })
+
+    it('returns zero-state on error', async () => {
+      const engineWithMtp = { ...mockEngine, getMtpInfo: vi.fn().mockRejectedValue(new Error('fail')) }
+      mockEngineManager.get.mockReturnValueOnce(engineWithMtp)
+      const result = await svc.getMtpInfo('model-id')
+      expect(result).toEqual({ mtp_layers: 0, mtp: false })
+    })
+  })
+
+  // ── updateMtpSettings ──
+  describe('updateMtpSettings', () => {
+    it('delegates to engine updateMtpSettings', async () => {
+      const engineWithMtp = { ...mockEngine, updateMtpSettings: vi.fn().mockResolvedValue(undefined) }
+      mockEngineManager.get.mockReturnValueOnce(engineWithMtp)
+      await svc.updateMtpSettings('model-id', { mtp: true, spec_draft_p_split: 0.2 })
+      expect(engineWithMtp.updateMtpSettings).toHaveBeenCalledWith('model-id', {
+        mtp: true,
+        spec_draft_p_split: 0.2,
+      })
+    })
+
+    it('does nothing when engine has no updateMtpSettings', async () => {
+      mockEngineManager.get.mockReturnValueOnce(mockEngine)
+      // Should not throw
+      await expect(svc.updateMtpSettings('model-id', { mtp: false })).resolves.toBeUndefined()
+    })
+
+    it('passes null to clear a tunable', async () => {
+      const engineWithMtp = { ...mockEngine, updateMtpSettings: vi.fn().mockResolvedValue(undefined) }
+      mockEngineManager.get.mockReturnValueOnce(engineWithMtp)
+      await svc.updateMtpSettings('model-id', { spec_draft_n_max: null, spec_draft_p_split: null })
+      expect(engineWithMtp.updateMtpSettings).toHaveBeenCalledWith('model-id', {
+        spec_draft_n_max: null,
+        spec_draft_p_split: null,
+      })
+    })
+  })
 })

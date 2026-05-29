@@ -201,6 +201,7 @@ export interface ModelsService {
     spec_draft_n_max?: number
     spec_draft_n_min?: number
     spec_draft_p_min?: number
+    spec_draft_p_split?: number
   }>
   updateMtpSettings(
     modelId: string,
@@ -209,6 +210,7 @@ export interface ModelsService {
       spec_draft_n_max?: number | null
       spec_draft_n_min?: number | null
       spec_draft_p_min?: number | null
+      spec_draft_p_split?: number | null
     }
   ): Promise<void>
   isModelSupported(

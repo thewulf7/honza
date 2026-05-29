@@ -33,6 +33,7 @@ type ModelYaml = ModelConfig & {
   spec_draft_n_max?: number
   spec_draft_n_min?: number
   spec_draft_p_min?: number
+  spec_draft_p_split?: number
 }
 
 export const MTP_MIN_BUILD = 9193
@@ -148,6 +149,15 @@ export async function generatePreset(
   if (typeof config.cont_batching === 'boolean') {
     lines.push(`cont-batching = ${config.cont_batching}`)
   }
+  if (typeof config.spec_type === 'string' && config.spec_type.length > 0 && config.spec_type !== 'none') {
+    lines.push(`spec-type = ${escapeIniValue(config.spec_type)}`)
+  }
+  if (typeof config.draft_max === 'number' && config.draft_max > 0) {
+    lines.push(`draft-max = ${Math.floor(config.draft_max)}`)
+  }
+  if (typeof config.draft_min === 'number' && config.draft_min > 0) {
+    lines.push(`draft-min = ${Math.floor(config.draft_min)}`)
+  }
   lines.push('')
 
   // ---------- per-model sections ----------
@@ -208,6 +218,12 @@ export async function generatePreset(
       lines.push(`cont-batching = ${mc.cont_batching}`)
     }
 
+    // If the global spec-type is draft-mtp but this model has MTP explicitly
+    // disabled, override with "none" so the per-model setting wins.
+    if (mc.mtp === false && config.spec_type === 'draft-mtp') {
+      lines.push('spec-type = none')
+    }
+
     if (
       mc.mtp === true &&
       typeof mc.mtp_layers === 'number' &&
@@ -233,6 +249,13 @@ export async function generatePreset(
         mc.spec_draft_p_min <= 1
       ) {
         lines.push(`spec-draft-p-min = ${mc.spec_draft_p_min}`)
+      }
+      if (
+        typeof mc.spec_draft_p_split === 'number' &&
+        mc.spec_draft_p_split >= 0 &&
+        mc.spec_draft_p_split <= 1
+      ) {
+        lines.push(`spec-draft-p-split = ${mc.spec_draft_p_split}`)
       }
     }
 

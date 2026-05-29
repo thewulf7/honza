@@ -102,6 +102,7 @@ describe('generatePreset MTP emission', () => {
       spec_draft_n_max: 8,
       spec_draft_n_min: 0,
       spec_draft_p_min: 0.8,
+      spec_draft_p_split: 0.1,
     })
     await generatePreset('/p', '/jan', CONFIG, { supportsMtp: true })
     const ini = writtenFiles['/p/router.preset.ini']
@@ -109,6 +110,18 @@ describe('generatePreset MTP emission', () => {
     expect(ini).toContain('spec-draft-n-max = 8')
     expect(ini).toContain('spec-draft-n-min = 0')
     expect(ini).toContain('spec-draft-p-min = 0.8')
+    expect(ini).toContain('spec-draft-p-split = 0.1')
+  })
+
+  it('emits spec-draft-p-split when within valid range', async () => {
+    setupModel('glm', {
+      mtp: true,
+      mtp_layers: 1,
+      spec_draft_p_split: 0.25,
+    })
+    await generatePreset('/p', '/jan', CONFIG, { supportsMtp: true })
+    const ini = writtenFiles['/p/router.preset.ini']
+    expect(ini).toContain('spec-draft-p-split = 0.25')
   })
 
   it('omits MTP lines when backend does not support MTP', async () => {
@@ -139,11 +152,13 @@ describe('generatePreset MTP emission', () => {
       mtp_layers: 1,
       spec_draft_n_max: -5,
       spec_draft_p_min: 1.5,
+      spec_draft_p_split: 2.0,
     })
     await generatePreset('/p', '/jan', CONFIG, { supportsMtp: true })
     const ini = writtenFiles['/p/router.preset.ini']
     expect(ini).toContain('spec-type = draft-mtp')
     expect(ini).not.toContain('spec-draft-n-max')
     expect(ini).not.toContain('spec-draft-p-min')
+    expect(ini).not.toContain('spec-draft-p-split')
   })
 })

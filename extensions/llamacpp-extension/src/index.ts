@@ -2568,6 +2568,7 @@ export default class llamacpp_extension extends AIEngine {
     spec_draft_n_max?: number
     spec_draft_n_min?: number
     spec_draft_p_min?: number
+    spec_draft_p_split?: number
   }> {
     const path = await joinPath([
       await this.getProviderPath(),
@@ -2584,6 +2585,7 @@ export default class llamacpp_extension extends AIEngine {
       spec_draft_n_max?: number
       spec_draft_n_min?: number
       spec_draft_p_min?: number
+      spec_draft_p_split?: number
     }
     return {
       mtp_layers: typeof cfg.mtp_layers === 'number' ? cfg.mtp_layers : 0,
@@ -2591,6 +2593,7 @@ export default class llamacpp_extension extends AIEngine {
       spec_draft_n_max: cfg.spec_draft_n_max,
       spec_draft_n_min: cfg.spec_draft_n_min,
       spec_draft_p_min: cfg.spec_draft_p_min,
+      spec_draft_p_split: cfg.spec_draft_p_split,
     }
   }
 
@@ -2601,6 +2604,7 @@ export default class llamacpp_extension extends AIEngine {
       spec_draft_n_max?: number | null
       spec_draft_n_min?: number | null
       spec_draft_p_min?: number | null
+      spec_draft_p_split?: number | null
     }
   ): Promise<void> {
     const configPath = await joinPath([
@@ -2617,11 +2621,12 @@ export default class llamacpp_extension extends AIEngine {
       spec_draft_n_max?: number
       spec_draft_n_min?: number
       spec_draft_p_min?: number
+      spec_draft_p_split?: number
     }
 
     if (typeof patch.mtp === 'boolean') cfg.mtp = patch.mtp
     const assignNumeric = (
-      key: 'spec_draft_n_max' | 'spec_draft_n_min' | 'spec_draft_p_min',
+      key: 'spec_draft_n_max' | 'spec_draft_n_min' | 'spec_draft_p_min' | 'spec_draft_p_split',
       value: number | null | undefined
     ) => {
       if (value === null) {
@@ -2633,6 +2638,7 @@ export default class llamacpp_extension extends AIEngine {
     if ('spec_draft_n_max' in patch) assignNumeric('spec_draft_n_max', patch.spec_draft_n_max)
     if ('spec_draft_n_min' in patch) assignNumeric('spec_draft_n_min', patch.spec_draft_n_min)
     if ('spec_draft_p_min' in patch) assignNumeric('spec_draft_p_min', patch.spec_draft_p_min)
+    if ('spec_draft_p_split' in patch) assignNumeric('spec_draft_p_split', patch.spec_draft_p_split)
 
     await invoke<void>('write_yaml', { data: cfg, savePath: configPath })
 

@@ -248,7 +248,9 @@
       "nMin": "Numero minimo token bozza",
       "nMinDescription": "Numero minimo di token da abbozzare per passaggio. Predefinito: 0.",
       "pMin": "Probabilità minima bozza",
-      "pMinDescription": "Probabilità minima per l'elaborazione greedy (0–1). Predefinito: 0.75."
+      "pMinDescription": "Probabilità minima per l'elaborazione greedy (0–1). Predefinito llama.cpp: 0. Lascia vuoto per usare il predefinito.",
+      "pSplit": "Probabilità di divisione",
+      "pSplitDescription": "Interrompe la bozza quando la probabilità del token scende sotto questa soglia (0–1). Predefinito llama.cpp: 0,10. Lascia vuoto per usare il predefinito."
     }
   },
   "dialogs": {
