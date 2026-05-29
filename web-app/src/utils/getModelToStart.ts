@@ -14,6 +14,18 @@ export const getLastUsedModel = (): {
   }
 }
 
+const LOCAL_PROVIDER_PRIORITY = ['llamacpp', 'mlx']
+
+function firstLocalModel(
+  getProviderByName: (name: string) => ModelProvider | undefined
+): { model: string; provider: ModelProvider } | null {
+  for (const name of LOCAL_PROVIDER_PRIORITY) {
+    const p = getProviderByName(name)
+    if (p?.models?.length) return { model: p.models[0].id, provider: p }
+  }
+  return null
+}
+
 // Helper function to determine which model to start
 export const getModelToStart = (params: {
   selectedModel?: ModelInfo | null
@@ -22,25 +34,12 @@ export const getModelToStart = (params: {
 }): { model: string; provider: ModelProvider } | null => {
   const { selectedModel, selectedProvider, getProviderByName } = params
 
-  // Use last used model if available
+  // Use last used model if it still exists
   const lastUsedModel = getLastUsedModel()
   if (lastUsedModel) {
     const provider = getProviderByName(lastUsedModel.provider)
-    if (provider && provider.models.some((m) => m.id === lastUsedModel.model)) {
+    if (provider?.models.some((m) => m.id === lastUsedModel.model)) {
       return { model: lastUsedModel.model, provider }
-    } else {
-      // Last used model not found under provider, fallback to first llamacpp model
-      const llamacppProvider = getProviderByName('llamacpp')
-      if (
-        llamacppProvider &&
-        llamacppProvider.models &&
-        llamacppProvider.models.length > 0
-      ) {
-        return {
-          model: llamacppProvider.models[0].id,
-          provider: llamacppProvider,
-        }
-      }
     }
   }
 
@@ -52,18 +51,6 @@ export const getModelToStart = (params: {
     }
   }
 
-  // Use first model from llamacpp provider
-  const llamacppProvider = getProviderByName('llamacpp')
-  if (
-    llamacppProvider &&
-    llamacppProvider.models &&
-    llamacppProvider.models.length > 0
-  ) {
-    return {
-      model: llamacppProvider.models[0].id,
-      provider: llamacppProvider,
-    }
-  }
-
-  return null
+  // Fall back to first available local model (llamacpp, then mlx)
+  return firstLocalModel(getProviderByName)
 }

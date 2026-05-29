@@ -6,6 +6,10 @@
   "main": "dist/index.js",
   "module": "dist/module.js",
   "engine": "mlx",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thewulf7/honza.git"
+  },
   "author": "Jan <service@jan.ai>",
   "license": "AGPL-3.0",
   "scripts": {

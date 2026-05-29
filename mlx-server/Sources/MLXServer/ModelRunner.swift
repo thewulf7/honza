@@ -9,10 +9,24 @@ import MLXVLM
 actor ModelRunner {
     private var model: ModelContext?
 
+    // Persistent session for KV cache reuse across requests
+    private var cachedSession: (session: ChatSession, messages: [ChatMessage])?
+
+    func configure(kvBits: Int?, maxKvSize: Int?, prefillStepSize: Int) {
+        serverConfig = ServerConfig(kvBits: kvBits, maxKvSize: maxKvSize, prefillStepSize: prefillStepSize)
+        cachedSession = nil
+        var parts: [String] = []
+        if let kb = kvBits { parts.append("\(kb)-bit KV cache") }
+        if let mkv = maxKvSize { parts.append("max KV size \(mkv)") }
+        if prefillStepSize != 512 { parts.append("prefill step \(prefillStepSize)") }
+        if !parts.isEmpty { log("[mlx] Server config: \(parts.joined(separator: ", "))") }
+    }
+
     /// Load a model from the given path
     /// Supports both local directories and HuggingFace model IDs
     func load(modelPath: String) async throws {
         log("[mlx] Loading model from: \(modelPath)")
+        cachedSession = nil
 
         let modelURL = URL(fileURLWithPath: modelPath)
         let fileManager = FileManager.default
@@ -57,21 +71,20 @@ actor ModelRunner {
         return (instructions, Array(history), current)
     }
 
+    /// Convert a role string to Chat.Message.Role
+    private nonisolated func toChatRole(_ role: String) -> Chat.Message.Role {
+        switch role {
+        case "assistant": return .assistant
+        case "user": return .user
+        case "system": return .system
+        case "tool": return .tool
+        default: return .user
+        }
+    }
+
     /// Convert a single ChatMessage to Chat.Message
     private func toChatMessage(_ message: ChatMessage) -> Chat.Message {
-        let role: Chat.Message.Role =
-        switch message.role {
-        case "assistant":
-                .assistant
-        case "user":
-                .user
-        case "system":
-                .system
-        case "tool":
-                .tool
-        default:
-                .user
-        }
+        let role = toChatRole(message.role)
 
         // Get image URLs from both explicit images field and content array format
         var imageUrls = message.content.imageUrls
@@ -108,19 +121,80 @@ actor ModelRunner {
             role: role, content: message.content.textContent, images: images, videos: videos)
     }
 
+    /// Server-level generation config set at startup (KV cache, prefill, etc.)
+    struct ServerConfig {
+        var kvBits: Int? = nil
+        var maxKvSize: Int? = nil
+        var prefillStepSize: Int = 512
+    }
+
+    var serverConfig = ServerConfig()
+
     /// Build GenerateParameters from individual parameters
     private nonisolated func buildGenerateParameters(
         temperature: Float,
         topP: Float,
         maxTokens: Int? = nil,
-        repetitionPenalty: Float
+        repetitionPenalty: Float,
+        serverConfig: ServerConfig
     ) -> GenerateParameters {
         GenerateParameters(
             maxTokens: maxTokens,
+            maxKVSize: serverConfig.maxKvSize,
+            kvBits: serverConfig.kvBits,
             temperature: temperature,
             topP: topP,
-            repetitionPenalty: repetitionPenalty,
+            repetitionPenalty: repetitionPenalty != 1.0 ? repetitionPenalty : nil,
+            prefillStepSize: serverConfig.prefillStepSize
         )
+    }
+
+    /// Check if two message arrays match by role and text content
+    private nonisolated func messagesMatch(_ a: [ChatMessage], _ b: [ChatMessage]) -> Bool {
+        guard a.count == b.count else { return false }
+        return zip(a, b).allSatisfy { $0.role == $1.role && $0.content.textContent == $1.content.textContent }
+    }
+
+    /// Attempt to reuse the cached ChatSession for the given messages.
+    ///
+    /// A session can be reused when `messages` is a strict extension of the previously
+    /// processed messages and the only new messages before the current one are assistant
+    /// turns (already encoded in the KV cache).  Returns the session to use and whether
+    /// it is a reused session (vs. freshly created).
+    private func resolveSession(
+        messages: [ChatMessage],
+        generateParameters: GenerateParameters,
+        toolSpecs: [[String: any Sendable]]?
+    ) -> (session: ChatSession, reused: Bool) {
+        guard let model = self.model else { fatalError("resolveSession called without a loaded model") }
+        let (instructions, history, _) = buildChat(from: messages)
+
+        if let cached = cachedSession,
+           messages.count > cached.messages.count,
+           messagesMatch(Array(messages.prefix(cached.messages.count)), cached.messages) {
+
+            // Delta = everything between the last cached snapshot and the current message
+            let allButCurrent = messages.dropLast()
+            let delta = Array(allButCurrent[cached.messages.count...])
+            // The delta should only be assistant messages (already in KV); any other role
+            // (e.g. a mid-turn user message or tool-result before the current turn) means
+            // we cannot safely extend the session.
+            let nonAssistantDelta = delta.filter { $0.role != "assistant" }
+
+            if nonAssistantDelta.isEmpty {
+                log("[mlx] KV cache reuse: \(cached.messages.count) previously processed messages")
+                cached.session.generateParameters = generateParameters
+                return (cached.session, true)
+            }
+        }
+
+        log("[mlx] Session: fresh session with \(history.count) history messages")
+        let session = ChatSession(
+            model, instructions: instructions, history: history,
+            generateParameters: generateParameters,
+            tools: toolSpecs
+        )
+        return (session, false)
     }
 
     /// Generate a chat completion (non-streaming)
@@ -134,22 +208,27 @@ actor ModelRunner {
         tools: [AnyCodable]? = nil
     ) async throws -> (String, [ToolCallInfo], UsageInfo) {
 
-        guard let model = self.model else {
+        guard model != nil else {
             log("[mlx] Error: generate() called but no model is loaded")
             throw MLXServerError.modelNotLoaded
         }
 
         log("[mlx] Generate: \(messages.count) messages, temp=\(temperature), topP=\(topP), maxTokens=\(maxTokens ?? -1)")
 
-        let (instructions, history, currentMessage) = buildChat(from: messages)
+        let (_, _, currentMessage) = buildChat(from: messages)
 
         let generateParameters = buildGenerateParameters(
             temperature: temperature, topP: topP,
-            maxTokens: maxTokens, repetitionPenalty: repetitionPenalty
+            maxTokens: maxTokens, repetitionPenalty: repetitionPenalty,
+            serverConfig: serverConfig
         )
 
         let toolSpecs = self.buildToolSpecs(from: tools)
-        let session = ChatSession(model, instructions: instructions, history: history, generateParameters: generateParameters, tools: toolSpecs)
+        let (session, _) = resolveSession(messages: messages, generateParameters: generateParameters, toolSpecs: toolSpecs)
+
+        let currentContent = currentMessage?.content ?? ""
+        let currentRole = currentMessage?.role ?? .user
+        let currentImages = currentMessage?.images ?? []
 
         var output = ""
         var completionTokenCount = 0
@@ -157,7 +236,7 @@ actor ModelRunner {
         var completionInfo: GenerateCompletionInfo?
 
         do {
-            for try await item in session.streamDetails(to: currentMessage?.content ?? "", images: currentMessage?.images ?? [], videos: []) {
+            for try await item in session.streamDetails(to: currentContent, role: currentRole, images: currentImages, videos: []) {
                 try Task.checkCancellation()
 
                 switch item {
@@ -197,6 +276,8 @@ actor ModelRunner {
             throw error
         }
 
+        cachedSession = (session: session, messages: messages)
+
         let usage: UsageInfo
         if let info = completionInfo {
             usage = UsageInfo(
@@ -228,26 +309,34 @@ actor ModelRunner {
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                guard let model = model else {
+                guard model != nil else {
                     log("[mlx] Error: generate() called but no model is loaded")
                     throw MLXServerError.modelNotLoaded
                 }
 
                 log("[mlx] Generate: \(messages.count) messages, temp=\(temperature), topP=\(topP), maxTokens=\(maxTokens ?? -1)")
-                let (instructions, history, currentMessage) = buildChat(from: messages)
+                let (_, _, currentMessage) = buildChat(from: messages)
 
                 let generateParameters = self.buildGenerateParameters(
                     temperature: temperature, topP: topP,
-                    maxTokens: maxTokens, repetitionPenalty: repetitionPenalty
+                    maxTokens: maxTokens, repetitionPenalty: repetitionPenalty,
+                    serverConfig: self.serverConfig
                 )
 
                 let toolSpecs = self.buildToolSpecs(from: tools)
-                let session = ChatSession(model, instructions: instructions, history: history, generateParameters: generateParameters, tools: toolSpecs)
+                let (session, _) = self.resolveSession(
+                    messages: messages,
+                    generateParameters: generateParameters,
+                    toolSpecs: toolSpecs
+                )
 
-                var completionTokenCount = 0
+                let currentContent = currentMessage?.content ?? ""
+                let currentRole = currentMessage?.role ?? .user
+                let currentImages = currentMessage?.images ?? []
+
                 var hasToolCalls = false
                 do {
-                    for try await item in session.streamDetails(to: currentMessage?.content ?? "", images: currentMessage?.images ?? [], videos: []) {
+                    for try await item in session.streamDetails(to: currentContent, role: currentRole, images: currentImages, videos: []) {
 
                         if Task.isCancelled {
                             log("[mlx] Stream generation cancelled by client")
@@ -256,8 +345,6 @@ actor ModelRunner {
 
                         switch item {
                         case .chunk(let chunk):
-                            completionTokenCount += 1
-
                             continuation.yield(.chunk(chunk))
 
                         case .info(let info):
@@ -296,6 +383,8 @@ actor ModelRunner {
                             continuation.yield(.toolCall(info))
                         }
                     }
+
+                    self.cachedSession = (session: session, messages: messages)
                     continuation.finish()
                 } catch {
                     if Task.isCancelled {
@@ -347,4 +436,3 @@ enum MLXServerError: Error, LocalizedError {
         }
     }
 }
-

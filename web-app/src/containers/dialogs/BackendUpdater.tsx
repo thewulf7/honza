@@ -14,6 +14,9 @@ const BackendUpdater = () => {
   const isLlamacppEnabled = useModelProvider(
     (s) => s.getProviderByName('llamacpp')?.active === true
   )
+  const isMlxEnabled = useModelProvider(
+    (s) => s.getProviderByName('mlx')?.active === true
+  )
   const { updateState, updateBackend, checkForUpdate, setRemindMeLater } =
     useBackendUpdater()
 
@@ -28,10 +31,10 @@ const BackendUpdater = () => {
     }
   }
 
-  // Check when the shell mounts or when the llamacpp provider is toggled on/off
+  // Check when the shell mounts or when any backend provider is toggled on/off
   useEffect(() => {
     checkForUpdate()
-  }, [checkForUpdate, isLlamacppEnabled])
+  }, [checkForUpdate, isLlamacppEnabled, isMlxEnabled])
 
   const [backendUpdateState, setBackendUpdateState] = useState({
     remindMeLater: false,
@@ -45,8 +48,8 @@ const BackendUpdater = () => {
     })
   }, [updateState])
 
-  // Don't prompt for the Llama.cpp engine when the provider is disabled (jan#7901)
-  if (!isLlamacppEnabled) {
+  // Don't prompt for engine updates when neither provider is enabled (jan#7901)
+  if (!isLlamacppEnabled && !isMlxEnabled) {
     return null
   }
 

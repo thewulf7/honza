@@ -32,12 +32,14 @@ struct MLXHTTPServer {
     let modelRunner: ModelRunner
     let modelId: String
     let apiKey: String
+    let defaultMaxTokens: Int
     let activeGenerations = ActiveGenerations()
 
-    init(modelRunner: ModelRunner, modelId: String, apiKey: String) {
+    init(modelRunner: ModelRunner, modelId: String, apiKey: String, defaultMaxTokens: Int = 4096) {
         self.modelRunner = modelRunner
         self.modelId = modelId
         self.apiKey = apiKey
+        self.defaultMaxTokens = defaultMaxTokens
     }
 
     func buildRouter() -> Router<BasicRequestContext> {
@@ -207,6 +209,64 @@ struct MLXHTTPServer {
                         type_name: "invalid_request_error",
                         code: nil
                     )
+                )
+                return try Response(
+                    status: .badRequest,
+                    headers: [.contentType: "application/json"],
+                    body: .init(byteBuffer: encodeJSONBuffer(errorResp))
+                )
+            }
+        }
+
+        // OpenAI Responses API
+        router.post("/v1/responses") { request, context in
+            if !self.apiKey.isEmpty {
+                let authHeader = request.headers[.authorization]
+                if authHeader != "Bearer \(self.apiKey)" {
+                    let error = ErrorResponse(
+                        error: ErrorDetail(message: "Unauthorized", type_name: "authentication_error", code: "unauthorized")
+                    )
+                    return try Response(
+                        status: .unauthorized,
+                        headers: [.contentType: "application/json"],
+                        body: .init(byteBuffer: encodeJSONBuffer(error))
+                    )
+                }
+            }
+
+            do {
+                let body = try await request.body.collect(upTo: 10 * 1024 * 1024)
+                let responsesReq = try JSONDecoder().decode(ResponsesRequest.self, from: body)
+
+                let messages = responsesToInternalMessages(responsesReq)
+                let temperature = responsesReq.temperature ?? 0.7
+                let maxTokens = responsesReq.max_output_tokens
+                let isStreaming = responsesReq.stream ?? false
+                let tools = responsesReq.tools.map { responsesToolsToChatTools($0) }
+
+                log("[mlx] Responses API: model=\(responsesReq.model), messages=\(messages.count), stream=\(isStreaming), tools=\(tools?.count ?? 0)")
+
+                if isStreaming {
+                    return try await self.handleResponsesStreaming(
+                        model: responsesReq.model,
+                        messages: messages,
+                        temperature: temperature,
+                        maxTokens: maxTokens,
+                        tools: tools
+                    )
+                } else {
+                    return try await self.handleResponsesNonStreaming(
+                        model: responsesReq.model,
+                        messages: messages,
+                        temperature: temperature,
+                        maxTokens: maxTokens,
+                        tools: tools
+                    )
+                }
+            } catch {
+                log("[mlx] Error processing Responses request: \(error.localizedDescription)")
+                let errorResp = ErrorResponse(
+                    error: ErrorDetail(message: error.localizedDescription, type_name: "invalid_request_error", code: nil)
                 )
                 return try Response(
                     status: .badRequest,
@@ -707,6 +767,245 @@ struct MLXHTTPServer {
 
         continuation.onTermination = { @Sendable _ in
             log("[mlx] Anthropic SSE continuation terminated, cancelling task")
+            task.cancel()
+        }
+
+        await activeGenerations.register(responseId, task: task)
+
+        return Response(
+            status: .ok,
+            headers: [
+                .contentType: "text/event-stream",
+                .init("Cache-Control")!: "no-cache",
+                .init("Connection")!: "keep-alive",
+            ],
+            body: .init(asyncSequence: responseStream)
+        )
+    }
+
+    // MARK: - Responses API Non-Streaming Handler
+
+    private func handleResponsesNonStreaming(
+        model: String,
+        messages: [ChatMessage],
+        temperature: Float,
+        maxTokens: Int?,
+        tools: [AnyCodable]?
+    ) async throws -> Response {
+        let (text, toolCalls, usage) = try await modelRunner.generate(
+            messages: messages,
+            temperature: temperature,
+            topP: 1.0,
+            maxTokens: maxTokens ?? defaultMaxTokens,
+            repetitionPenalty: 1.0,
+            stop: [],
+            tools: tools
+        )
+
+        let itemId = "msg_\(UUID().uuidString.prefix(24))"
+        var outputItems: [ResponsesOutputItem] = []
+
+        if toolCalls.isEmpty {
+            outputItems.append(ResponsesOutputItem(
+                type: "message",
+                id: itemId,
+                role: "assistant",
+                content: [ResponsesOutputContent(type: "output_text", text: text)],
+                status: "completed"
+            ))
+        } else {
+            if !text.isEmpty {
+                outputItems.append(ResponsesOutputItem(
+                    type: "message",
+                    id: "msg_\(UUID().uuidString.prefix(24))",
+                    role: "assistant",
+                    content: [ResponsesOutputContent(type: "output_text", text: text)],
+                    status: "completed"
+                ))
+            }
+            for tc in toolCalls {
+                outputItems.append(ResponsesOutputItem(
+                    type: "function_call",
+                    id: "fc_\(UUID().uuidString.prefix(24))",
+                    call_id: tc.id,
+                    name: tc.function.name,
+                    arguments: tc.function.arguments
+                ))
+            }
+        }
+
+        let response = ResponsesResponse(
+            id: "resp_\(UUID().uuidString.prefix(24))",
+            object: "response",
+            created_at: currentTimestamp(),
+            model: model,
+            output: outputItems,
+            status: "completed",
+            usage: ResponsesUsage(
+                input_tokens: usage.prompt_tokens ?? 0,
+                output_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens ?? (usage.prompt_tokens ?? 0) + usage.completion_tokens
+            )
+        )
+
+        log("[mlx] Responses response: \(text.count) chars, \(toolCalls.count) tool call(s)")
+
+        let data = try jsonEncoder.encode(response)
+        var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+        buffer.writeBytes(data)
+        return Response(status: .ok, headers: [.contentType: "application/json"], body: .init(byteBuffer: buffer))
+    }
+
+    // MARK: - Responses API Streaming Handler
+
+    private func handleResponsesStreaming(
+        model: String,
+        messages: [ChatMessage],
+        temperature: Float,
+        maxTokens: Int?,
+        tools: [AnyCodable]?
+    ) async throws -> Response {
+        let responseId = "resp_\(UUID().uuidString.prefix(24))"
+        let itemId = "msg_\(UUID().uuidString.prefix(24))"
+
+        let stream = await modelRunner.generateStream(
+            messages: messages,
+            temperature: temperature,
+            topP: 1.0,
+            maxTokens: maxTokens ?? defaultMaxTokens,
+            repetitionPenalty: 1.0,
+            stop: [],
+            tools: tools
+        )
+
+        let (responseStream, continuation) = AsyncStream<ByteBuffer>.makeStream()
+        let activeGenerations = self.activeGenerations
+
+        func emit(_ eventName: String, _ payload: [String: Any]) {
+            guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+            continuation.yield(buildAnthropicSSEFrame(event: eventName, data: data))
+        }
+
+        let task = Task {
+            defer {
+                continuation.finish()
+                Task { await activeGenerations.remove(responseId) }
+            }
+
+            // response.created
+            emit("response.created", [
+                "type": "response.created",
+                "response": [
+                    "id": responseId, "object": "response", "created_at": currentTimestamp(),
+                    "model": model, "status": "in_progress", "output": []
+                ]
+            ])
+
+            // response.output_item.added (message)
+            emit("response.output_item.added", [
+                "type": "response.output_item.added", "output_index": 0,
+                "item": ["type": "message", "id": itemId, "role": "assistant", "content": [], "status": "in_progress"]
+            ])
+
+            // response.content_part.added (output_text)
+            emit("response.content_part.added", [
+                "type": "response.content_part.added", "item_id": itemId,
+                "output_index": 0, "content_index": 0,
+                "part": ["type": "output_text", "text": ""]
+            ])
+
+            var fullText = ""
+            var outputIndex = 0
+            var toolCallItems: [[String: Any]] = []
+
+            do {
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    switch event {
+                    case .chunk(let token):
+                        fullText += token
+                        emit("response.output_text.delta", [
+                            "type": "response.output_text.delta", "item_id": itemId,
+                            "output_index": 0, "content_index": 0, "delta": token
+                        ])
+
+                    case .toolCall(let tc):
+                        let tcId = "fc_\(UUID().uuidString.prefix(24))"
+                        outputIndex += 1
+                        let tcItemInProgress: [String: Any] = [
+                            "type": "function_call", "id": tcId,
+                            "call_id": tc.id, "name": tc.function.name,
+                            "arguments": "", "status": "in_progress"
+                        ]
+                        let tcItemDone: [String: Any] = [
+                            "type": "function_call", "id": tcId,
+                            "call_id": tc.id, "name": tc.function.name,
+                            "arguments": tc.function.arguments, "status": "completed"
+                        ]
+                        toolCallItems.append(tcItemDone)
+                        emit("response.output_item.added", [
+                            "type": "response.output_item.added", "output_index": outputIndex, "item": tcItemInProgress
+                        ])
+                        emit("response.function_call_arguments.delta", [
+                            "type": "response.function_call_arguments.delta",
+                            "item_id": tcId, "output_index": outputIndex,
+                            "delta": tc.function.arguments
+                        ])
+                        emit("response.function_call_arguments.done", [
+                            "type": "response.function_call_arguments.done",
+                            "item_id": tcId, "output_index": outputIndex,
+                            "arguments": tc.function.arguments
+                        ])
+                        emit("response.output_item.done", [
+                            "type": "response.output_item.done", "output_index": outputIndex, "item": tcItemDone
+                        ])
+
+                    case .done(let usage, _, _):
+                        // Close text content part and message item
+                        emit("response.output_text.done", [
+                            "type": "response.output_text.done", "item_id": itemId,
+                            "output_index": 0, "content_index": 0, "text": fullText
+                        ])
+                        emit("response.content_part.done", [
+                            "type": "response.content_part.done", "item_id": itemId,
+                            "output_index": 0, "content_index": 0,
+                            "part": ["type": "output_text", "text": fullText]
+                        ])
+                        let doneItem: [String: Any] = [
+                            "type": "message", "id": itemId, "role": "assistant",
+                            "content": [["type": "output_text", "text": fullText]],
+                            "status": "completed"
+                        ]
+                        emit("response.output_item.done", [
+                            "type": "response.output_item.done", "output_index": 0, "item": doneItem
+                        ])
+
+                        let promptTokens = usage.prompt_tokens ?? 0
+                        emit("response.completed", [
+                            "type": "response.completed",
+                            "response": [
+                                "id": responseId, "object": "response",
+                                "created_at": currentTimestamp(), "model": model,
+                                "status": "completed",
+                                "output": [doneItem] + toolCallItems,
+                                "usage": [
+                                    "input_tokens": promptTokens,
+                                    "output_tokens": usage.completion_tokens,
+                                    "total_tokens": (usage.total_tokens ?? promptTokens + usage.completion_tokens)
+                                ]
+                            ]
+                        ])
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    log("[mlx] Error in Responses SSE stream: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        continuation.onTermination = { @Sendable _ in
+            log("[mlx] Responses SSE continuation terminated, cancelling task")
             task.cancel()
         }
 

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useRef, useState } from 'react'
-import { IconCircleCheck, IconCircleX, IconRefresh, IconPlus } from '@tabler/icons-react'
+import { IconCircleCheck, IconCircleX, IconRefresh, IconPlus, IconHandStop, IconTerminal2, IconAlertCircle } from '@tabler/icons-react'
 import { toast } from 'sonner'
 
 import { useTranslation } from '@/i18n/react-i18next-compat'
@@ -313,7 +313,10 @@ export function CodexAgentSettings() {
             <IntegrationModelSelector
               providers={providers}
               selectedModel={settings.model}
-              onSelect={(id) => setFormField('model', id ?? '')}
+              onSelect={(id) => {
+                setModel(id ?? null)
+                setFormField('model', id ?? '')
+              }}
               placeholder={t('codex.notSet')}
               allowEmptyOption
               showSize
@@ -321,7 +324,7 @@ export function CodexAgentSettings() {
           }
           descriptionOutside={
             <div className="flex flex-col gap-2">
-              <JanCodeRecommendation selectedModel={settings.model} onSelect={setModel} />
+              <JanCodeRecommendation selectedModel={settings.model} onSelect={(id) => { setModel(id); setFormField('model', id) }} />
             </div>
           }
         />
@@ -345,15 +348,32 @@ export function CodexAgentSettings() {
         <CardItem title={t('codex.behavior.approvalPolicyTitle')} description={t('codex.behavior.approvalPolicyDesc')} actions={
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="min-w-[140px] justify-between">
-                {formFields.approval_policy ? t(`codex.approvalPolicy.${formFields.approval_policy}`, { defaultValue: formFields.approval_policy }) : <span className="text-muted-foreground">{t('codex.notSet')}</span>}
-                <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground ml-2" />
+              <Button variant="outline" size="sm" className="min-w-40 justify-between gap-2">
+                {formFields.approval_policy === 'on-failure'
+                  ? <IconTerminal2 size={14} className="text-muted-foreground shrink-0" />
+                  : formFields.approval_policy === 'never'
+                    ? <IconAlertCircle size={14} className="text-muted-foreground shrink-0" />
+                    : <IconHandStop size={14} className="text-muted-foreground shrink-0" />}
+                <span className="flex-1 text-left">
+                  {formFields.approval_policy
+                    ? t(`codex.approvalPolicy.${formFields.approval_policy}`, { defaultValue: formFields.approval_policy })
+                    : t('codex.approvalPolicy.on-request')}
+                </span>
+                <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {(['', 'on-failure', 'on-request', 'never', 'always'] as const).map((v) => (
-                <DropdownMenuItem key={v} onClick={() => setFormField('approval_policy', v)}>
-                  {v ? t(`codex.approvalPolicy.${v}`, { defaultValue: v }) : <span className="text-muted-foreground">{t('codex.notSet')}</span>}
+              {([
+                { value: 'on-request', Icon: IconHandStop },
+                { value: 'on-failure', Icon: IconTerminal2 },
+                { value: 'never', Icon: IconAlertCircle },
+              ] as const).map(({ value, Icon }) => (
+                <DropdownMenuItem key={value} onClick={() => setFormField('approval_policy', value)}>
+                  <Icon size={14} className="text-muted-foreground" />
+                  {t(`codex.approvalPolicy.${value}`)}
+                  {formFields.approval_policy === value && (
+                    <span className="ml-auto text-xs text-muted-foreground">✓</span>
+                  )}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

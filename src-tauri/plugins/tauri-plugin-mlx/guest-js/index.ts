@@ -10,9 +10,14 @@ function asNumber(v: any, defaultValue = 0): number {
 }
 
 export function normalizeMlxConfig(config: any): MlxConfig {
-  return {
+  const normalized: MlxConfig = {
     ctx_size: asNumber(config.ctx_size),
   }
+  if (config.kv_bits != null) normalized.kv_bits = asNumber(config.kv_bits)
+  if (config.max_kv_size != null) normalized.max_kv_size = asNumber(config.max_kv_size)
+  if (config.prefill_step_size != null) normalized.prefill_step_size = asNumber(config.prefill_step_size, 512)
+  if (config.memory_limit_gb != null) normalized.memory_limit_gb = asNumber(config.memory_limit_gb)
+  return normalized
 }
 
 export async function loadMlxModel(
@@ -60,4 +65,16 @@ export async function getMlxLoadedModels(): Promise<string[]> {
 
 export async function getMlxAllSessions(): Promise<SessionInfo[]> {
   return await invoke('plugin:mlx|get_mlx_all_sessions')
+}
+
+/** Override the mlx-server binary used for loading models.
+ *  Pass an empty string to revert to the bundled binary. */
+export async function setMlxCustomBinaryPath(path: string): Promise<void> {
+  return await invoke('plugin:mlx|set_mlx_custom_binary_path', { path })
+}
+
+/** Return the binary path that will be resolved when loading models.
+ *  Returns the custom override if set and present on disk, otherwise the bundled path. */
+export async function getMlxResolvedBinaryPath(): Promise<string> {
+  return await invoke('plugin:mlx|get_mlx_resolved_binary_path')
 }

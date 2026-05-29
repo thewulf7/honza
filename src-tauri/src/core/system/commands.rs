@@ -944,7 +944,26 @@ pub fn write_codex_config(
     // Only write the model key when a model is actually selected; an empty string
     // would cause Codex to use "" as the model name and fail.
     if let Some(m) = model.filter(|v| !v.trim().is_empty()) {
-        jan_profile["model"] = value(m);
+        jan_profile["model"] = value(m.clone());
+        
+        let catalog_path = config_dir.join("jan_model_catalog.json");
+        let cw = context_window.unwrap_or(131072);
+        let catalog_json = serde_json::json!({
+            "models": [{
+                "slug": &m,
+                "display_name": &m,
+                "model_context_window": cw,
+                "max_context_window": cw,
+                "supports_tools": true,
+                "prefer_websockets": false,
+                "support_verbosity": true,
+                "default_verbosity": "low",
+                "apply_patch_tool_type": "freeform"
+            }]
+        });
+        if fs::write(&catalog_path, serde_json::to_string_pretty(&catalog_json).unwrap_or_default()).is_ok() {
+            jan_profile["model_catalog_json"] = value(catalog_path.to_string_lossy().into_owned());
+        }
     }
     // Sensible defaults for local-model coding sessions.
     jan_profile["approval_policy"] = value("on-request");

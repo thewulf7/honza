@@ -19,28 +19,6 @@ use crate::core::{
     state::{ProviderConfig, ServerHandle, SharedMcpServers},
 };
 
-const SCHEMA_PRIMITIVE_TYPES: &[&str] = &[
-    "string", "number", "integer", "boolean", "null", "array", "object",
-];
-
-/// If `value` is a bare string naming a JSON-schema primitive type (e.g.
-/// `"string"`), expand it to `{ "type": <that> }`. Some tool generators emit
-/// shorthand like `{ "properties": { "foo": "string" } }`; llama.cpp's
-/// json-schema-to-grammar rejects that with `Unrecognized schema: "string"`.
-fn coerce_schema_node(value: &mut serde_json::Value) {
-    if let serde_json::Value::String(s) = value {
-        if SCHEMA_PRIMITIVE_TYPES.contains(&s.as_str()) {
-            let mut obj = serde_json::Map::new();
-            obj.insert(
-                "type".to_string(),
-                serde_json::Value::String(std::mem::take(s)),
-            );
-            *value = serde_json::Value::Object(obj);
-        }
-    }
-    normalize_openai_tool_parameters_schema(value);
-}
-
 /// Some OpenAI tool schema generators (and some MCP servers) may emit schemas where
 /// a property schema only contains `description` but omits `type`, or where a
 /// schema-node slot holds a bare type-name string instead of a sub-schema object.
@@ -63,7 +41,7 @@ pub(crate) fn normalize_openai_schema_root(schema: &mut serde_json::Value) {
 }
 
 pub(crate) fn normalize_openai_tool_parameters_schema(schema: &mut serde_json::Value) {
-     normalize_openai_tool_parameters_schema_at(schema, true);
+    normalize_openai_tool_parameters_schema_at(schema, true);
 }
 
 fn normalize_openai_tool_parameters_schema_at(
@@ -132,77 +110,7 @@ fn normalize_openai_tool_parameters_schema_at(
 }
 
 fn normalize_openai_responses_schema(schema: &mut serde_json::Value) {
-    match schema {
-        serde_json::Value::String(_) => {
-            normalize_openai_schema_root(schema);
-        }
-        serde_json::Value::Object(map) => {
-            let has_description = map.contains_key("description");
-            let has_type = map.contains_key("type");
-            let is_object_type = map.get("type").and_then(|v| v.as_str()) == Some("object");
-            let has_nested_schema_keywords = map.contains_key("properties")
-                || map.contains_key("items")
-                || map.contains_key("anyOf")
-                || map.contains_key("oneOf")
-                || map.contains_key("allOf")
-                || map.contains_key("$ref");
-
-            if is_object_type && !map.contains_key("properties") {
-                map.insert(
-                    "properties".to_string(),
-                    serde_json::Value::Object(serde_json::Map::new()),
-                );
-            }
-
-            // Only patch leaf nodes (description without `type` AND without nested schema keywords).
-            if has_description && !has_type && !has_nested_schema_keywords {
-                map.insert(
-                    "type".to_string(),
-                    serde_json::Value::String("string".to_string()),
-                );
-            }
-
-            // Recurse, with shorthand expansion for keys whose direct children
-            // are schema nodes.
-            for (key, v) in map.iter_mut() {
-                match key.as_str() {
-                    "properties" | "patternProperties" | "definitions" | "$defs" => {
-                        if let serde_json::Value::Object(inner) = v {
-                            for (_, child) in inner.iter_mut() {
-                                coerce_schema_node(child);
-                            }
-                        } else {
-                            normalize_openai_tool_parameters_schema(v);
-                        }
-                    }
-                    "anyOf" | "oneOf" | "allOf" | "prefixItems" => {
-                        if let serde_json::Value::Array(arr) = v {
-                            for child in arr.iter_mut() {
-                                coerce_schema_node(child);
-                            }
-                        } else {
-                            normalize_openai_tool_parameters_schema(v);
-                        }
-                    }
-                    "items" => match v {
-                        serde_json::Value::Array(arr) => {
-                            for child in arr.iter_mut() {
-                                coerce_schema_node(child);
-                            }
-                        }
-                        _ => coerce_schema_node(v),
-                    },
-                    _ => normalize_openai_tool_parameters_schema(v),
-                }
-            }
-        }
-        serde_json::Value::Array(arr) => {
-            for v in arr.iter_mut() {
-                normalize_openai_responses_schema(v);
-            }
-        }
-        _ => {}
-    }
+    normalize_openai_tool_parameters_schema_at(schema, true);
 }
 
 pub(crate) fn normalize_openai_tools_in_chat_body(body: &mut serde_json::Value) {
@@ -1158,13 +1066,71 @@ fn mcp_call_result_to_string(result: &CallToolResult) -> String {
         .collect();
 
     if result.is_error == Some(true) {
-        if parts.is_empty() {
-            "ERROR".to_string()
+        let msg = if parts.is_empty() {
+            "MCP tool call failed".to_string()
         } else {
-            format!("ERROR: {}", parts.join("\n"))
-        }
+            parts.join("\n")
+        };
+        serde_json::json!({"error": msg}).to_string()
     } else {
         parts.join("\n")
+    }
+}
+
+pub(crate) fn builtin_openai_tools() -> Vec<serde_json::Value> {
+    vec![serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": "file_edit_tool",
+            "description": "Write content to a file at the given path. Creates the file if it does not exist, or overwrites it entirely if it does.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path of the file to write (absolute or relative to the working directory)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        }
+    })]
+}
+
+pub(crate) fn execute_file_edit_tool(args_str: &str) -> String {
+    let args: serde_json::Value = match serde_json::from_str(args_str) {
+        Ok(v) => v,
+        Err(e) => return serde_json::json!({"error": format!("Invalid arguments: {e}")}).to_string(),
+    };
+
+    let path = match args.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return serde_json::json!({"error": "Missing required argument: path"}).to_string(),
+    };
+
+    let content = match args.get("content").and_then(|v| v.as_str()) {
+        Some(c) => c,
+        None => return serde_json::json!({"error": "Missing required argument: content"}).to_string(),
+    };
+
+    log::warn!(
+        "file_edit_tool: writing {} bytes to '{}' (no path restrictions enforced)",
+        content.len(),
+        path
+    );
+
+    match std::fs::write(path, content) {
+        Ok(_) => serde_json::json!({
+            "success": true,
+            "path": path,
+            "bytes_written": content.len()
+        })
+        .to_string(),
+        Err(e) => serde_json::json!({"error": format!("Failed to write '{path}': {e}")}).to_string(),
     }
 }
 
@@ -1473,14 +1439,20 @@ async fn execute_mcp_tool_calls(
             .and_then(|v| v.as_str())
             .unwrap_or("{}");
 
+        // Built-in tools are executed locally without routing through an MCP server.
+        if tool_name == "file_edit_tool" {
+            results.push((tool_call_id, execute_file_edit_tool(args_str)));
+            continue;
+        }
+
         let args_value: serde_json::Value = serde_json::from_str(args_str)
             .unwrap_or_else(|_| serde_json::json!({}));
 
         let args_map: serde_json::Map<String, serde_json::Value> = if let Some(obj) = args_value.as_object() {
-            obj.clone()
-        } else {
-            serde_json::Map::new()
-        };
+                obj.clone()
+            } else {
+                serde_json::Map::new()
+            };
 
         let server_name = tool_to_server
             .get(&tool_name)
@@ -1505,7 +1477,7 @@ async fn execute_mcp_tool_calls(
 
         let tool_result_string = match result {
             Ok(res) => mcp_call_result_to_string(&res),
-            Err(e) => format!("ERROR: {e}"),
+            Err(e) => serde_json::json!({"error": e}).to_string(),
         };
 
         results.push((tool_call_id, tool_result_string));
@@ -1618,8 +1590,13 @@ async fn run_server_side_openai_orchestration(
     }
     let model_id = model_id.ok_or("No running model sessions available")?;
 
-    let (openai_tools, tool_to_server) =
+    let (mcp_tools, tool_to_server) =
         collect_mcp_openai_tools(&mcp_servers, &mcp_settings).await?;
+
+    let all_tools: Vec<serde_json::Value> = mcp_tools
+        .into_iter()
+        .chain(builtin_openai_tools())
+        .collect();
 
     let (upstream_url, session_api_keys) = resolve_upstream_for_model(
         &model_id,
@@ -1635,6 +1612,13 @@ async fn run_server_side_openai_orchestration(
         .unwrap_or(8)
         .clamp(1, 20) as usize;
 
+    let max_tool_calls = json_body
+        .get("max_tool_calls")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5)
+        .clamp(1, 100) as usize;
+
+    let mut total_tool_calls: usize = 0;
     let mut last_response: Option<serde_json::Value> = None;
 
     for _turn in 0..max_turns {
@@ -1647,10 +1631,10 @@ async fn run_server_side_openai_orchestration(
         completion_map.insert("stream".to_string(), serde_json::json!(false));
         completion_map.insert("tool_choice".to_string(), serde_json::json!("auto"));
 
-        if !openai_tools.is_empty() {
+        if !all_tools.is_empty() {
             completion_map.insert(
                 "tools".to_string(),
-                serde_json::Value::Array(openai_tools.clone()),
+                serde_json::Value::Array(all_tools.clone()),
             );
         }
 
@@ -1663,12 +1647,21 @@ async fn run_server_side_openai_orchestration(
             &session_api_keys,
             &request_value,
         )
-        .await?;
+                .await?;
 
         let tool_calls = extract_tool_calls(&completion);
         last_response = Some(completion.clone());
 
         if tool_calls.is_empty() {
+            return Ok(completion);
+        }
+
+        total_tool_calls += tool_calls.len();
+        if total_tool_calls > max_tool_calls {
+            log::warn!(
+                "Tool call rate limit of {max_tool_calls} per request reached \
+                 ({total_tool_calls} calls attempted); returning last completion"
+            );
             return Ok(completion);
         }
 
@@ -1696,7 +1689,7 @@ async fn run_server_side_openai_orchestration(
             &mcp_servers,
             &mcp_settings,
         )
-        .await?;
+                .await?;
 
         for (tool_call_id, result_text) in tool_results {
             conversation_messages.push(serde_json::json!({
@@ -2277,23 +2270,23 @@ async fn proxy_request(
 
             // Load assistant config for system prompt + model hint when assistant_id is provided.
             let (assistant_instructions, assistant_model_hint) = if let Some(assistant_id) = assistant_id.as_deref() {
-                match load_assistant_config(&jan_data_folder, assistant_id) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        let mut error_response =
-                            Response::builder().status(StatusCode::BAD_REQUEST);
-                        error_response = add_cors_headers_with_host_and_origin(
-                            error_response,
-                            &host_header,
-                            &origin_header,
-                            &config.trusted_hosts,
-                        );
-                        return Ok(error_response.body(Body::from(e)).unwrap());
+                    match load_assistant_config(&jan_data_folder, assistant_id) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            let mut error_response =
+                                Response::builder().status(StatusCode::BAD_REQUEST);
+                            error_response = add_cors_headers_with_host_and_origin(
+                                error_response,
+                                &host_header,
+                                &origin_header,
+                                &config.trusted_hosts,
+                            );
+                            return Ok(error_response.body(Body::from(e)).unwrap());
+                        }
                     }
-                }
-            } else {
-                (None, None)
-            };
+                } else {
+                    (None, None)
+                };
 
             if let Some(sys) = assistant_instructions {
                 set_system_prompt(&mut conversation_messages, &sys);
@@ -2341,8 +2334,8 @@ async fn proxy_request(
                 }
             };
 
-            // Tool execution support (MCP only for now).
-            let (openai_tools, tool_to_server) =
+            // Tool execution support (MCP + built-in tools).
+            let (mcp_tools, tool_to_server) =
                 match collect_mcp_openai_tools(&mcp_servers, &mcp_settings).await {
                     Ok(v) => v,
                     Err(e) => {
@@ -2357,6 +2350,11 @@ async fn proxy_request(
                         return Ok(error_response.body(Body::from(e)).unwrap());
                     }
                 };
+
+            let openai_tools: Vec<serde_json::Value> = mcp_tools
+                .into_iter()
+                .chain(builtin_openai_tools())
+                .collect();
 
             let (upstream_url, session_api_keys) = match resolve_upstream_for_model(
                 &model_id,
@@ -2386,6 +2384,13 @@ async fn proxy_request(
                 .unwrap_or(8)
                 .clamp(1, 20) as usize;
 
+            let max_tool_calls = json_body
+                .get("max_tool_calls")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5)
+                .clamp(1, 100) as usize;
+
+            let mut total_tool_calls: usize = 0;
             let mut last_response: Option<serde_json::Value> = None;
 
             for _turn in 0..max_turns {
@@ -2433,6 +2438,25 @@ async fn proxy_request(
                 last_response = Some(completion.clone());
 
                 if tool_calls.is_empty() {
+                    let body_str = serde_json::to_string(&completion).unwrap_or_else(|_| "{}".to_string());
+                    let mut response_builder = Response::builder()
+                        .status(StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "application/json");
+                    response_builder = add_cors_headers_with_host_and_origin(
+                        response_builder,
+                        &host_header,
+                        &origin_header,
+                        &config.trusted_hosts,
+                    );
+                    return Ok(response_builder.body(Body::from(body_str)).unwrap());
+                }
+
+                total_tool_calls += tool_calls.len();
+                if total_tool_calls > max_tool_calls {
+                    log::warn!(
+                        "Tool call rate limit of {max_tool_calls} per request reached \
+                         ({total_tool_calls} calls attempted); returning last completion"
+                    );
                     let body_str = serde_json::to_string(&completion).unwrap_or_else(|_| "{}".to_string());
                     let mut response_builder = Response::builder()
                         .status(StatusCode::OK)
@@ -2782,27 +2806,57 @@ async fn proxy_request(
                 .await
                 .into_iter()
                 .map(|id| {
-                    serde_json::json!({
-                        "id": id,
+                    let mut obj = serde_json::json!({
+                        "id": id.clone(),
                         "object": "model",
                         "created": 1,
                         "owned_by": "llama.cpp"
-                    })
+                    });
+
+                    let yml_path = std::path::Path::new(&jan_data_folder)
+                        .join("llamacpp")
+                        .join("models")
+                        .join(&id)
+                        .join("model.yml");
+
+                    if let Ok(content) = std::fs::read_to_string(&yml_path) {
+                        if let Ok(yml) = serde_yaml::from_str::<serde_json::Value>(&content) {
+                            if let Some(obj_mut) = obj.as_object_mut() {
+                                let _ = obj_mut.insert("metadata".to_string(), yml);
+                            }
+                        }
+                    }
+                    obj
                 })
                 .collect();
 
-            // Get MLX sessions
             let mlx_models: Vec<_> = {
                 let mlx_guard = mlx_sessions.lock().await;
                 mlx_guard
                     .values()
                     .map(|session| {
-                        serde_json::json!({
-                            "id": session.info.model_id,
+                        let id = session.info.model_id.clone();
+                        let mut obj = serde_json::json!({
+                            "id": &id,
                             "object": "model",
                             "created": 1,
                             "owned_by": "mlx"
-                        })
+                        });
+
+                        let yml_path = std::path::Path::new(&jan_data_folder)
+                            .join("mlx")
+                            .join("models")
+                            .join(&id)
+                            .join("model.yml");
+
+                        if let Ok(content) = std::fs::read_to_string(&yml_path) {
+                            if let Ok(yml) = serde_yaml::from_str::<serde_json::Value>(&content) {
+                                if let Some(obj_mut) = obj.as_object_mut() {
+                                    let _ = obj_mut.insert("metadata".to_string(), yml);
+                                }
+                            }
+                        }
+                        obj
                     })
                     .collect()
             };
@@ -3065,41 +3119,41 @@ async fn proxy_request(
         let outbound_req_with_body = outbound_req.body(body_bytes_for_proxy.clone());
 
         match outbound_req_with_body.send().await {
-        Ok(response) => {
-            let status = response.status();
+            Ok(response) => {
+                let status = response.status();
 
-            let is_error = !status.is_success();
+                let is_error = !status.is_success();
 
-            if is_error
-                && http_status_indicates_api_key_retry(status)
-                && key_idx + 1 < key_attempts.len()
-            {
-                let _ = response.text().await;
-                log::warn!("Upstream {status} for API key index {key_idx}, trying next key");
-                continue;
-            }
+                if is_error
+                    && http_status_indicates_api_key_retry(status)
+                    && key_idx + 1 < key_attempts.len()
+                {
+                    let _ = response.text().await;
+                    log::warn!("Upstream {status} for API key index {key_idx}, trying next key");
+                    continue;
+                }
 
-            // For Anthropic /messages requests with errors, try /chat/completions
-            if is_error && is_anthropic_messages {
-                log::warn!("Request failed for /messages with status {status}, trying /chat/completions...");
+                // For Anthropic /messages requests with errors, try /chat/completions
+                if is_error && is_anthropic_messages {
+                    log::warn!("Request failed for /messages with status {status}, trying /chat/completions...");
 
-                // Read the error body to return to client if fallback fails
-                let error_body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|e| format!("Failed to read error body: {}", e));
+                    // Read the error body to return to client if fallback fails
+                    let error_body = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|e| format!("Failed to read error body: {}", e));
 
-                // Clone what we need for the fallback request
-                let fallback_url = target_base_url.clone().map(|url| {
-                    url.trim_end_matches("/messages")
-                        .trim_end_matches('/')
-                        .to_string()
-                });
-                let fallback_api_key = key_opt.clone();
-                let fallback_body = Some(body_bytes_for_proxy.clone());
+                    // Clone what we need for the fallback request
+                    let fallback_url = target_base_url.clone().map(|url| {
+                        url.trim_end_matches("/messages")
+                            .trim_end_matches('/')
+                            .to_string()
+                    });
+                    let fallback_api_key = key_opt.clone();
+                    let fallback_body = Some(body_bytes_for_proxy.clone());
 
-                // Transform body to OpenAI format for fallback
-                if let Some((url, openai_body)) = fallback_url.zip(fallback_body).and_then(|(url, body)| {
+                    // Transform body to OpenAI format for fallback
+                    if let Some((url, openai_body)) = fallback_url.zip(fallback_body).and_then(|(url, body)| {
                     let json_body = serde_json::from_slice::<serde_json::Value>(&body).ok()?;
                     match transform_anthropic_to_openai(&json_body) {
                         Some(transformed) => Some((url, transformed)),
@@ -3203,86 +3257,86 @@ async fn proxy_request(
                     }
                 }
 
-                // If fallback failed or wasn't attempted, return error to client
-                let mut error_response = Response::builder().status(status);
-                error_response = add_cors_headers_with_host_and_origin(
-                    error_response,
-                    &host_header,
-                    &origin_header,
-                    &config.trusted_hosts,
-                );
-                return Ok(error_response.body(Body::from(error_body)).unwrap());
-            } else if is_error {
-                // Non-/messages error - return error response with body
-                let error_body = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|e| format!("Failed to read error body: {}", e));
+                    // If fallback failed or wasn't attempted, return error to client
+                    let mut error_response = Response::builder().status(status);
+                    error_response = add_cors_headers_with_host_and_origin(
+                        error_response,
+                        &host_header,
+                        &origin_header,
+                        &config.trusted_hosts,
+                    );
+                    return Ok(error_response.body(Body::from(error_body)).unwrap());
+                } else if is_error {
+                    // Non-/messages error - return error response with body
+                    let error_body = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|e| format!("Failed to read error body: {}", e));
 
-                let mut error_response = Response::builder().status(status);
-                error_response = add_cors_headers_with_host_and_origin(
-                    error_response,
-                    &host_header,
-                    &origin_header,
-                    &config.trusted_hosts,
-                );
-                return Ok(error_response.body(Body::from(error_body)).unwrap());
-            }
-
-            // Success case - stream the response
-            let mut builder = Response::builder().status(status);
-
-            for (name, value) in response.headers() {
-                if !is_cors_header(name.as_str()) && name != hyper::header::CONTENT_LENGTH {
-                    builder = builder.header(name, value);
+                    let mut error_response = Response::builder().status(status);
+                    error_response = add_cors_headers_with_host_and_origin(
+                        error_response,
+                        &host_header,
+                        &origin_header,
+                        &config.trusted_hosts,
+                    );
+                    return Ok(error_response.body(Body::from(error_body)).unwrap());
                 }
-            }
 
-            builder = add_cors_headers_with_host_and_origin(
-                builder,
-                &host_header,
-                &origin_header,
-                &config.trusted_hosts,
-            );
+                // Success case - stream the response
+                let mut builder = Response::builder().status(status);
 
-            let mut stream = response.bytes_stream();
-            let (mut sender, body) = hyper::Body::channel();
+                for (name, value) in response.headers() {
+                    if !is_cors_header(name.as_str()) && name != hyper::header::CONTENT_LENGTH {
+                        builder = builder.header(name, value);
+                    }
+                }
 
-            tokio::spawn(async move {
-                // Regular passthrough - when /messages succeeds directly,
-                // the response is already in the correct format
-                while let Some(chunk_result) = stream.next().await {
-                    match chunk_result {
-                        Ok(chunk) => {
-                            if sender.send_data(chunk).await.is_err() {
-                                log::debug!("Client disconnected during streaming");
+                builder = add_cors_headers_with_host_and_origin(
+                    builder,
+                    &host_header,
+                    &origin_header,
+                    &config.trusted_hosts,
+                );
+
+                let mut stream = response.bytes_stream();
+                let (mut sender, body) = hyper::Body::channel();
+
+                tokio::spawn(async move {
+                    // Regular passthrough - when /messages succeeds directly,
+                    // the response is already in the correct format
+                    while let Some(chunk_result) = stream.next().await {
+                        match chunk_result {
+                            Ok(chunk) => {
+                                if sender.send_data(chunk).await.is_err() {
+                                    log::debug!("Client disconnected during streaming");
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Stream error: {e}");
                                 break;
                             }
                         }
-                        Err(e) => {
-                            log::error!("Stream error: {e}");
-                            break;
-                        }
                     }
-                }
-                log::debug!("Streaming complete to client");
-            });
+                    log::debug!("Streaming complete to client");
+                });
 
-            return Ok(builder.body(body).unwrap());
+                return Ok(builder.body(body).unwrap());
+            }
+            Err(e) => {
+                let error_msg = format!("Proxy request to model failed: {e}");
+                log::error!("{error_msg}");
+                let mut error_response = Response::builder().status(StatusCode::BAD_GATEWAY);
+                error_response = add_cors_headers_with_host_and_origin(
+                    error_response,
+                    &host_header,
+                    &origin_header,
+                    &config.trusted_hosts,
+                );
+                return Ok(error_response.body(Body::from(error_msg)).unwrap());
+            }
         }
-        Err(e) => {
-            let error_msg = format!("Proxy request to model failed: {e}");
-            log::error!("{error_msg}");
-            let mut error_response = Response::builder().status(StatusCode::BAD_GATEWAY);
-            error_response = add_cors_headers_with_host_and_origin(
-                error_response,
-                &host_header,
-                &origin_header,
-                &config.trusted_hosts,
-            );
-            return Ok(error_response.body(Body::from(error_msg)).unwrap());
-        }
-    }
     }
 
     log::error!("Internal error: proxy key loop exited without a response");

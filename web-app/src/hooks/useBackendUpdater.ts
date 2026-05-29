@@ -9,6 +9,42 @@ function isLlamacppProviderActive(): boolean {
   return p?.active === true
 }
 
+/** MLX engine updates only apply when the mlx model provider is enabled. */
+function isMlxProviderActive(): boolean {
+  const p = useModelProvider.getState().getProviderByName('mlx')
+  return p?.active === true
+}
+
+/** Return the backend extension appropriate for the active provider, or null. */
+function resolveBackendExtension(): LlamacppExtension | null {
+  const allExtensions = ExtensionManager.getInstance().listExtensions()
+
+  // Prefer llamacpp when it is active.
+  if (isLlamacppProviderActive()) {
+    const ext =
+      ExtensionManager.getInstance().getByName('llamacpp-extension') ??
+      allExtensions.find(
+        (e) =>
+          e.constructor.name.toLowerCase().includes('llamacpp') ||
+          (e.type && e.type()?.toString().toLowerCase().includes('inference'))
+      )
+    if (ext) return ext as unknown as LlamacppExtension
+  }
+
+  // Fall back to mlx when it is active.
+  if (isMlxProviderActive()) {
+    const ext =
+      ExtensionManager.getInstance().getByName('@janhq/mlx-extension') ??
+      ExtensionManager.getInstance().getByName('mlx-extension') ??
+      allExtensions.find((e) =>
+        e.constructor.name.toLowerCase().includes('mlx')
+      )
+    if (ext) return ext as unknown as LlamacppExtension
+  }
+
+  return null
+}
+
 export interface BackendUpdateInfo {
   updateNeeded: boolean
   newVersion: string
@@ -166,7 +202,7 @@ export const useBackendUpdater = () => {
           syncStateToOtherInstances(newState)
         }
 
-        if (!isLlamacppProviderActive()) {
+        if (!isLlamacppProviderActive() && !isMlxProviderActive()) {
           const newState = {
             isUpdateAvailable: false,
             updateInfo: null,
@@ -179,34 +215,12 @@ export const useBackendUpdater = () => {
           return null
         }
 
-        // Get llamacpp extension instance
-        const allExtensions = ExtensionManager.getInstance().listExtensions()
-
-        const llamacppExtension =
-          ExtensionManager.getInstance().getByName('llamacpp-extension')
-
-        let extensionToUse = llamacppExtension
-
-        if (!llamacppExtension) {
-          // Try to find by type or other properties
-          const possibleExtension = allExtensions.find(
-            (ext) =>
-              ext.constructor.name.toLowerCase().includes('llamacpp') ||
-              (ext.type &&
-                ext.type()?.toString().toLowerCase().includes('inference'))
-          )
-
-          if (!possibleExtension) {
-            console.error('LlamaCpp extension not found')
-            return null
-          }
-
-          extensionToUse = possibleExtension
-        }
+        // Get the extension that handles updates for the active provider
+        const extensionToUse = resolveBackendExtension()
 
         if (!extensionToUse || !('checkBackendForUpdates' in extensionToUse)) {
           console.error(
-            'Extension does not support checkBackendForUpdates method'
+            'No backend extension supporting checkBackendForUpdates found'
           )
           return null
         }
@@ -276,7 +290,7 @@ export const useBackendUpdater = () => {
   const updateBackend = useCallback(async () => {
     if (!updateState.updateInfo) return
 
-    if (!isLlamacppProviderActive()) {
+    if (!isLlamacppProviderActive() && !isMlxProviderActive()) {
       const newState = {
         isUpdateAvailable: false,
         updateInfo: null,
@@ -301,35 +315,15 @@ export const useBackendUpdater = () => {
         isUpdating: true,
       }))
 
-      // Get llamacpp extension instance
-      const allExtensions = ExtensionManager.getInstance().listExtensions()
-      const llamacppExtension =
-        ExtensionManager.getInstance().getByName('llamacpp-extension')
-
-      let extensionToUse = llamacppExtension
-
-      if (!llamacppExtension) {
-        // Try to find by type or other properties
-        const possibleExtension = allExtensions.find(
-          (ext) =>
-            ext.constructor.name.toLowerCase().includes('llamacpp') ||
-            (ext.type &&
-              ext.type()?.toString().toLowerCase().includes('inference'))
-        )
-
-        if (!possibleExtension) {
-          throw new Error('LlamaCpp extension not found')
-        }
-
-        extensionToUse = possibleExtension
-      }
+      // Get the extension that handles updates for the active provider
+      const extensionToUse = resolveBackendExtension()
 
       if (
         !extensionToUse ||
         !('getSettings' in extensionToUse) ||
         !('updateBackend' in extensionToUse)
       ) {
-        throw new Error('Extension does not support backend updates')
+        throw new Error('No backend extension supporting updateBackend found')
       }
 
       const extension = extensionToUse as LlamacppExtension

@@ -14,4 +14,8 @@ export interface UnloadResult {
 
 export type MlxConfig = {
   ctx_size: number
+  kv_bits?: number
+  max_kv_size?: number
+  prefill_step_size?: number
+  memory_limit_gb?: number
 }

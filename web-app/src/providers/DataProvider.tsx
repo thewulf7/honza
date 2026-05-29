@@ -9,6 +9,8 @@ import { useNavigate } from '@tanstack/react-router'
 import { route } from '@/constants/routes'
 import { useThreads } from '@/hooks/useThreads'
 import { useLocalApiServer } from '@/hooks/useLocalApiServer'
+import { getLastUsedModel } from '@/utils/getModelToStart'
+import { localStorageKey } from '@/constants/localStorage'
 import { useAppState } from '@/hooks/useAppState'
 import { AppEvent, events } from '@janhq/core'
 import { SystemEvent } from '@/types/events'
@@ -115,6 +117,7 @@ export function DataProvider() {
     lastServerModels,
     setLastServerModels,
     defaultModelLocalApiServer,
+    setDefaultModelLocalApiServer,
   } = useLocalApiServer()
   const setServerStatus = useAppState((state) => state.setServerStatus)
 
@@ -184,6 +187,24 @@ export function DataProvider() {
   const providers = useModelProvider((s) => s.providers)
   useEffect(() => {
     syncRemoteProviders()
+
+    // Clear persisted model references that no longer exist in any provider
+    const modelExists = (id: string) =>
+      providers.some((p) => p.models?.some((m) => m.id === id))
+
+    if (defaultModelLocalApiServer && !modelExists(defaultModelLocalApiServer.model)) {
+      setDefaultModelLocalApiServer(null)
+    }
+
+    const validLastServerModels = lastServerModels.filter((m) => modelExists(m.model))
+    if (validLastServerModels.length !== lastServerModels.length) {
+      setLastServerModels(validLastServerModels)
+    }
+
+    const lastUsed = getLastUsedModel()
+    if (lastUsed && !modelExists(lastUsed.model)) {
+      localStorage.removeItem(localStorageKey.lastUsedModel)
+    }
   }, [providers])
 
   // Check for app updates - initial check and periodic interval

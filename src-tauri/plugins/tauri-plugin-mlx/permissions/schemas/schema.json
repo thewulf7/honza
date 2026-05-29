@@ -355,6 +355,18 @@
           "markdownDescription": "Denies the get_mlx_random_port command without any pre-configured scope."
         },
         {
+          "description": "Enables the get_mlx_resolved_binary_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-mlx-resolved-binary-path",
+          "markdownDescription": "Enables the get_mlx_resolved_binary_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_mlx_resolved_binary_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-mlx-resolved-binary-path",
+          "markdownDescription": "Denies the get_mlx_resolved_binary_path command without any pre-configured scope."
+        },
+        {
           "description": "Enables the is_mlx_process_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-is-mlx-process-running",
@@ -377,6 +389,18 @@
           "type": "string",
           "const": "deny-load-mlx-model",
           "markdownDescription": "Denies the load_mlx_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_mlx_custom_binary_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-mlx-custom-binary-path",
+          "markdownDescription": "Enables the set_mlx_custom_binary_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_mlx_custom_binary_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-mlx-custom-binary-path",
+          "markdownDescription": "Denies the set_mlx_custom_binary_path command without any pre-configured scope."
         },
         {
           "description": "Enables the unload_mlx_model command without any pre-configured scope.",

@@ -7,10 +7,67 @@
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  background: hsl(0, 0%, 100%);
+  background:
+    
+    /* soft blue glow */
+    radial-gradient(
+      circle at bottom left,
+      rgba(120, 150, 255, 0.45) 0%,
+      rgba(120, 150, 255, 0.12) 22%,
+      transparent 42%
+    ),
+
+    /* pink glow */
+    radial-gradient(
+      circle at bottom center,
+      rgba(255, 170, 220, 0.30) 0%,
+      rgba(255, 170, 220, 0.10) 20%,
+      transparent 40%
+    ),
+
+    /* peach glow */
+    radial-gradient(
+      circle at right center,
+      rgba(255, 210, 180, 0.35) 0%,
+      rgba(255, 210, 180, 0.12) 25%,
+      transparent 45%
+    ),
+
+    /* lavender ambient tone */
+    radial-gradient(
+      circle at center,
+      rgba(190, 180, 255, 0.18) 0%,
+      transparent 55%
+    ),
+
+    /* base background */
+    linear-gradient(
+      180deg,
+      #f5f6fb 0%,
+      #eceef7 100%
+    );
+
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   z-index: 9999;
   opacity: 1;
   transition: opacity 0.3s ease-in-out;
+}
+
+/* Optional soft floating curve */
+#initial-loader::before {
+  content: "";
+  position: absolute;
+  left: -10%;
+  bottom: -18%;
+  width: 120%;
+  height: 45%;
+
+  background: rgba(255, 255, 255, 0.28);
+
+  border-radius: 50%;
+
+  filter: blur(40px);
 }
 
 /* Light mode (default) */

@@ -1,5 +1,6 @@
 use flate2::read::GzDecoder;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::Read,
     path::PathBuf,
@@ -71,6 +72,37 @@ pub fn install_extensions<R: Runtime>(app: tauri::AppHandle<R>, force: bool) -> 
         vec![]
     };
 
+    // In debug builds, prefer local workspace extension dist files over tgz extracts.
+    // CARGO_MANIFEST_DIR is src-tauri/, so parent() is the workspace root.
+    #[cfg(debug_assertions)]
+    let local_extension_paths: HashMap<String, PathBuf> = {
+        let workspace_extensions = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|p| p.join("extensions"))
+            .unwrap_or_default();
+        let mut map = HashMap::new();
+        if workspace_extensions.exists() {
+            for dir_entry in fs::read_dir(&workspace_extensions).into_iter().flatten().flatten() {
+                let pkg_json = dir_entry.path().join("package.json");
+                if let Ok(content) = fs::read_to_string(&pkg_json) {
+                    if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(name) = manifest["name"].as_str() {
+                            let main = manifest["main"].as_str().unwrap_or("dist/index.js");
+                            let dist = dir_entry.path().join(main);
+                            if dist.exists() {
+                                log::info!("Dev mode: found local extension {} at {:?}", name, dist);
+                                map.insert(name.to_string(), dist);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map
+    };
+    #[cfg(not(debug_assertions))]
+    let local_extension_paths: HashMap<String, PathBuf> = HashMap::new();
+
     for entry in fs::read_dir(&pre_install_path).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
@@ -118,7 +150,10 @@ pub fn install_extensions<R: Runtime>(app: tauri::AppHandle<R>, force: bool) -> 
                 .as_ref()
                 .and_then(|manifest| manifest["main"].as_str())
                 .unwrap_or("index.js");
-            let url = extension_dir.join(main_entry).to_string_lossy().to_string();
+            let url = local_extension_paths
+                .get(&extension_name)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| extension_dir.join(main_entry).to_string_lossy().to_string());
 
             let new_extension = serde_json::json!({
                 "url": url,

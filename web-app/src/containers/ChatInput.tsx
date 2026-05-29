@@ -34,6 +34,9 @@ import {
   IconBrandChrome,
   IconUser,
   IconFolderCode,
+  IconHandStop,
+  IconTerminal2,
+  IconAlertCircle,
 } from '@tabler/icons-react'
 import { generateId } from 'ai'
 import { useMessageQueue } from '@/stores/message-queue-store'
@@ -132,6 +135,12 @@ const setAgentWorkingDirectory = (path: string) => {
 
 const getDirectoryLabel = (path: string) =>
   path.split(/[\\/]/).filter(Boolean).pop() ?? path
+
+const CODEX_APPROVAL_POLICIES = [
+  { value: 'on-request' as const, Icon: IconHandStop },
+  { value: 'on-failure' as const, Icon: IconTerminal2 },
+  { value: 'never' as const, Icon: IconAlertCircle },
+]
 
 const ChatInput = memo(function ChatInput({
   className,
@@ -2500,22 +2509,30 @@ const ChatInput = memo(function ChatInput({
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
-                <span className="text-muted-foreground">{tSettings('codex.behavior.approvalPolicyTitle')}:</span>
+                {codexBehavior.approval_policy === 'on-failure'
+                  ? <IconTerminal2 size={14} className="text-muted-foreground" />
+                  : codexBehavior.approval_policy === 'never'
+                    ? <IconAlertCircle size={14} className="text-muted-foreground" />
+                    : <IconHandStop size={14} className="text-muted-foreground" />}
                 <span>
                   {codexBehavior.approval_policy
                     ? tSettings(`codex.approvalPolicy.${codexBehavior.approval_policy}`, { defaultValue: codexBehavior.approval_policy })
-                    : tSettings('codex.notSet')}
+                    : tSettings('codex.approvalPolicy.on-request')}
                 </span>
                 <ChevronsUpDown className="size-3 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              {(['', 'on-failure', 'on-request', 'never', 'always'] as const).map((v) => (
+              {CODEX_APPROVAL_POLICIES.map(({ value, Icon }) => (
                 <DropdownMenuItem
-                  key={v === '' ? '__unset__' : v}
-                  onClick={() => saveCodexBehaviorField('approval_policy', v)}
+                  key={value}
+                  onClick={() => saveCodexBehaviorField('approval_policy', value)}
                 >
-                  {v ? tSettings(`codex.approvalPolicy.${v}`, { defaultValue: v }) : <span className="text-muted-foreground">{tSettings('codex.notSet')}</span>}
+                  <Icon size={14} className="text-muted-foreground" />
+                  {tSettings(`codex.approvalPolicy.${value}`)}
+                  {codexBehavior.approval_policy === value && (
+                    <span className="ml-auto text-xs text-muted-foreground">✓</span>
+                  )}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

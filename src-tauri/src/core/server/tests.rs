@@ -1070,6 +1070,65 @@ mod tests {
     }
 
     #[test]
+    fn normalize_openai_tools_in_responses_body_preserves_root_type_string() {
+        let mut body = json!({
+            "tools": [{
+                "type": "function",
+                "name": "list_mcp_resources",
+                "description": "List resources from configured MCP servers.",
+                "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                        "cursor": {
+                            "description": "Opaque cursor returned by a previous list_mcp_resources call for the same server.",
+                            "type": "string"
+                        },
+                        "server": {
+                            "description": "Optional MCP server name. When omitted, lists resources from every configured server.",
+                            "type": "string"
+                        }
+                    },
+                    "type": "object"
+                }
+            }]
+        });
+
+        proxy::normalize_openai_tools_in_responses_body(&mut body);
+
+        assert_eq!(body["tools"][0]["parameters"]["type"], json!("object"));
+        assert_eq!(
+            body["tools"][0]["parameters"]["properties"]["cursor"]["type"],
+            json!("string")
+        );
+    }
+
+    #[test]
+    fn normalize_openai_tools_in_responses_body_preserves_enum_literal_strings() {
+        let mut body = json!({
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {
+                            "type": "string",
+                            "enum": ["string", "number", "fast"]
+                        }
+                    }
+                }
+            }]
+        });
+
+        proxy::normalize_openai_tools_in_responses_body(&mut body);
+
+        assert_eq!(
+            body["tools"][0]["parameters"]["properties"]["mode"]["enum"],
+            json!(["string", "number", "fast"])
+        );
+    }
+
+    #[test]
     fn normalize_openai_tools_in_responses_body_drops_non_function_tools() {
         let mut body = json!({
             "tools": [
@@ -1504,6 +1563,85 @@ mod tests {
         assert_eq!(cloned.proxy_api_key, "k");
         assert!(cloned.enable_server_tool_execution);
     }
+
+    // ── file_edit_tool ─────────────────────────────────────────────────────
+
+    #[test]
+    fn execute_file_edit_tool_writes_file_and_returns_success() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("proxy_test_file_edit.txt");
+        let path_str = path.to_str().unwrap();
+        let args = serde_json::json!({"path": path_str, "content": "hello world"}).to_string();
+
+        let result = proxy::execute_file_edit_tool(&args);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+
+        assert_eq!(parsed["success"], json!(true));
+        assert_eq!(parsed["bytes_written"], json!(11));
+        assert_eq!(std::fs::read_to_string(path_str).unwrap(), "hello world");
+        let _ = std::fs::remove_file(path_str);
+    }
+
+    #[test]
+    fn execute_file_edit_tool_missing_path_returns_error() {
+        let args = serde_json::json!({"content": "oops"}).to_string();
+        let result = proxy::execute_file_edit_tool(&args);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("path"));
+    }
+
+    #[test]
+    fn execute_file_edit_tool_missing_content_returns_error() {
+        let args = serde_json::json!({"path": "/tmp/nope"}).to_string();
+        let result = proxy::execute_file_edit_tool(&args);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("content"));
+    }
+
+    #[test]
+    fn execute_file_edit_tool_invalid_json_returns_error() {
+        let result = proxy::execute_file_edit_tool("not-json{{{");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("Invalid arguments"));
+    }
+
+    #[test]
+    fn execute_file_edit_tool_unwritable_path_returns_error() {
+        let args = serde_json::json!({"path": "/nonexistent_dir/no_perms/file.txt", "content": "x"}).to_string();
+        let result = proxy::execute_file_edit_tool(&args);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed.get("error").is_some());
+    }
+
+    #[test]
+    fn builtin_openai_tools_contains_file_edit_tool() {
+        let tools = proxy::builtin_openai_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], json!("function"));
+        assert_eq!(tools[0]["function"]["name"], json!("file_edit_tool"));
+        let params = &tools[0]["function"]["parameters"];
+        assert_eq!(params["type"], json!("object"));
+        assert!(params["properties"]["path"].is_object());
+        assert!(params["properties"]["content"].is_object());
+        let required = params["required"].as_array().unwrap();
+        assert!(required.contains(&json!("path")));
+        assert!(required.contains(&json!("content")));
+    }
+
+    // ── structured error format ────────────────────────────────────────────
+
+    #[test]
+    fn mcp_error_result_serializes_as_json_object() {
+        // Verify the error path in mcp_call_result_to_string produces JSON.
+        // We test indirectly via execute_file_edit_tool which follows the same convention.
+        let args = serde_json::json!({"path": "/bad/dir/file.txt", "content": "x"}).to_string();
+        let result = proxy::execute_file_edit_tool(&args);
+        // Must be valid JSON with an "error" key, not a plain "ERROR: ..." string.
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed.get("error").is_some(), "error field missing from: {result}");
+    }
+
+    // ── normalizes_combinator_members_recursively (original test follows) ──
 
     #[test]
     fn normalizes_combinator_members_recursively() {

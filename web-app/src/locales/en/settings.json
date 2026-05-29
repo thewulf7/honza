@@ -6,11 +6,11 @@
   "noUpdateAvailable": "You're running the latest version",
   "devVersion": "Development version detected",
   "updateError": "Failed to check for updates",
-  "checkForBackendUpdates": "Check for Llamacpp updates",
-  "checkForBackendUpdatesDesc": "Check if a newer version of the Llamacpp backend is available.",
-  "checkingForBackendUpdates": "Checking for Llamacpp updates...",
-  "noBackendUpdateAvailable": "You're running the latest Llamacpp version",
-  "backendUpdateError": "Failed to check for Llamacpp updates",
+  "checkForBackendUpdates": "Check for engine updates",
+  "checkForBackendUpdatesDesc": "Check if a newer version of the inference engine is available.",
+  "checkingForBackendUpdates": "Checking for engine updates...",
+  "noBackendUpdateAvailable": "You're running the latest engine version",
+  "backendUpdateError": "Failed to check for engine updates",
   "changeLocation": "Change Location",
   "copied": "Copied",
   "copyPath": "Copy Path",
@@ -322,13 +322,13 @@
     }
   },
   "backendUpdater": {
-    "newBackendVersion": "New Llamacpp Version {{version}}",
-    "backendUpdateAvailable": "Llamacpp Update Available",
+    "newBackendVersion": "New Engine Version {{version}}",
+    "backendUpdateAvailable": "Engine Update Available",
     "remindMeLater": "Remind Me Later",
     "updating": "Updating...",
     "updateNow": "Update Now",
-    "updateSuccess": "Llamacpp updated successfully",
-    "updateError": "Failed to update Llamacpp"
+    "updateSuccess": "Engine updated successfully",
+    "updateError": "Failed to update engine"
   },
   "backendInstallSuccess": "Backend installed successfully!",
   "backendInstallError": "Failed to install backend",
@@ -406,10 +406,9 @@
       "fullStdoutDesc": "Print full stdout from commands without truncation"
     },
     "approvalPolicy": {
-      "on-failure": "On Failure",
-      "on-request": "On Request",
-      "never": "Never",
-      "always": "Always"
+      "on-request": "Default permissions",
+      "on-failure": "Auto-review",
+      "never": "Full access"
     },
     "sandboxMode": {
       "off": "Off",

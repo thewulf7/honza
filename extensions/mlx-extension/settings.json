@@ -1,5 +1,92 @@
 [
   {
+    "key": "version_backend",
+    "title": "MLX Server Version",
+    "description": "Select the mlx-server binary version to use. Versions are fetched from the [release page](https://github.com/thewulf7/honza/releases) and cached locally.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "bundled",
+      "options": [
+        { "value": "bundled", "name": "Bundled (app default)" }
+      ],
+      "recommended": ""
+    }
+  },
+  {
+    "key": "ctx_size",
+    "title": "Context Size",
+    "description": "Maximum output tokens per request. Also used as the default max_tokens when not specified by the client.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 8192,
+      "placeholder": "8192",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "kv_bits",
+    "title": "KV Cache Quantization",
+    "description": "Quantize the KV cache to reduce memory usage for long contexts. 4-bit saves ~4× memory vs unquantized; 8-bit saves ~2×. Recommended for large contexts (16K+).",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": 0,
+      "options": [
+        { "value": 0, "name": "None (full precision)" },
+        { "value": 8, "name": "8-bit" },
+        { "value": 4, "name": "4-bit" }
+      ]
+    }
+  },
+  {
+    "key": "max_kv_size",
+    "title": "Max KV Cache Tokens",
+    "description": "Maximum number of tokens kept in the KV cache. When exceeded, oldest tokens (except the first 4) are evicted. Set to 0 for unlimited. Useful on memory-constrained devices.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 0,
+      "placeholder": "0 (unlimited)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "prefill_step_size",
+    "title": "Prefill Step Size",
+    "description": "Number of prompt tokens processed per GPU step during prefill (equivalent to llama.cpp ubatch-size). Larger values may be faster but use more memory. Default: 512.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 512,
+      "placeholder": "512",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "memory_limit_gb",
+    "title": "GPU Memory Limit (GB)",
+    "description": "Hard cap on GPU memory usage. Set to 0 to use the system default (1.5× Metal recommended working set). Useful to prevent OOM on devices with limited unified memory.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 0,
+      "placeholder": "0 (system default)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "timeout",
+    "title": "Timeout",
+    "description": "MLX model load and inference timeout in seconds.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 600,
+      "placeholder": "600",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
     "key": "auto_unload",
     "title": "Auto unload model",
     "description": "Automatically unload other models when loading a new one",

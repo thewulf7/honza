@@ -66,10 +66,18 @@ pub struct UnloadResult {
 }
 
 /// MLX server configuration passed from the frontend
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MlxConfig {
     #[serde(default)]
     pub ctx_size: i32,
+    #[serde(default)]
+    pub kv_bits: i32,
+    #[serde(default)]
+    pub max_kv_size: i32,
+    #[serde(default)]
+    pub prefill_step_size: i32,
+    #[serde(default)]
+    pub memory_limit_gb: f32,
 }
 
 /// Core model-loading logic, decoupled from Tauri AppHandle.
@@ -133,6 +141,22 @@ pub async fn load_mlx_model_impl(
     if config.ctx_size > 0 {
         args.push("--ctx-size".to_string());
         args.push(config.ctx_size.to_string());
+    }
+    if config.kv_bits == 4 || config.kv_bits == 8 {
+        args.push("--kv-bits".to_string());
+        args.push(config.kv_bits.to_string());
+    }
+    if config.max_kv_size > 0 {
+        args.push("--max-kv-size".to_string());
+        args.push(config.max_kv_size.to_string());
+    }
+    if config.prefill_step_size > 0 {
+        args.push("--prefill-step-size".to_string());
+        args.push(config.prefill_step_size.to_string());
+    }
+    if config.memory_limit_gb > 0.0 {
+        args.push("--memory-limit-gb".to_string());
+        args.push(format!("{:.1}", config.memory_limit_gb));
     }
 
     if !api_key.is_empty() {
@@ -314,6 +338,56 @@ pub async fn load_mlx_model_impl(
     Ok(session_info)
 }
 
+/// Resolve the bundled mlx-server binary path from the app resource directory.
+fn resolve_bundled_binary<R: Runtime>(app_handle: &tauri::AppHandle<R>) -> ServerResult<std::path::PathBuf> {
+    Ok(app_handle
+        .path()
+        .resource_dir()
+        .map_err(|e| {
+            MlxError::new(
+                ErrorCode::BinaryNotFound,
+                "Failed to get resource dir".to_string(),
+                Some(e.to_string()),
+            )
+        })?
+        .join("resources/bin/mlx-server"))
+}
+
+/// Set a custom mlx-server binary path.  When non-empty, this overrides the bundled binary.
+#[tauri::command]
+pub async fn set_mlx_custom_binary_path<R: Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    path: String,
+) -> Result<(), String> {
+    let state: State<MlxState> = app_handle.state();
+    let mut custom = state.custom_binary_path.lock().await;
+    if path.is_empty() {
+        *custom = None;
+    } else {
+        *custom = Some(std::path::PathBuf::from(&path));
+    }
+    log::info!("[MLX] Custom binary path set to: {:?}", path);
+    Ok(())
+}
+
+/// Return the binary path that will be used when loading models.
+/// The custom override takes priority when it exists on disk.
+#[tauri::command]
+pub async fn get_mlx_resolved_binary_path<R: Runtime>(
+    app_handle: tauri::AppHandle<R>,
+) -> Result<String, String> {
+    let state: State<MlxState> = app_handle.state();
+    let custom = state.custom_binary_path.lock().await;
+    if let Some(ref p) = *custom {
+        if p.exists() {
+            return Ok(p.to_string_lossy().into_owned());
+        }
+    }
+    let bundled = resolve_bundled_binary(&app_handle)
+        .map_err(|e| format!("{e:?}"))?;
+    Ok(bundled.to_string_lossy().into_owned())
+}
+
 /// Load a model using the MLX server binary (Tauri command wrapper)
 #[tauri::command]
 pub async fn load_mlx_model<R: Runtime>(
@@ -327,17 +401,20 @@ pub async fn load_mlx_model<R: Runtime>(
     timeout: u64,
 ) -> ServerResult<SessionInfo> {
     let state: State<MlxState> = app_handle.state();
-    let binary_path = app_handle
-        .path()
-        .resource_dir()
-        .map_err(|e| {
-            MlxError::new(
-                ErrorCode::BinaryNotFound,
-                "Failed to get resource dir".to_string(),
-                Some(e.to_string()),
-            )
-        })?
-        .join("resources/bin/mlx-server");
+    // Custom binary path takes priority when it exists on disk.
+    let binary_path = {
+        let custom = state.custom_binary_path.lock().await;
+        if let Some(ref p) = *custom {
+            if p.exists() {
+                p.clone()
+            } else {
+                log::warn!("[MLX] Custom binary {:?} not found, falling back to bundled", p);
+                resolve_bundled_binary(&app_handle)?
+            }
+        } else {
+            resolve_bundled_binary(&app_handle)?
+        }
+    };
     load_mlx_model_impl(
         state.mlx_server_process.clone(),
         &binary_path,

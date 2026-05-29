@@ -266,7 +266,15 @@ export const useModelProvider = create<ModelProviderState>()(
             }
           }
 
-          return { providers: nextProviders }
+          const selectedModelId = state.selectedModel?.id
+          const selectedModelStillExists =
+            !selectedModelId ||
+            nextProviders.some((p) => p.models?.some((m) => m.id === selectedModelId))
+
+          return {
+            providers: nextProviders,
+            selectedModel: selectedModelStillExists ? state.selectedModel : null,
+          }
         }),
       updateProvider: (providerName, data) => {
         set((state) => ({
@@ -326,6 +334,8 @@ export const useModelProvider = create<ModelProviderState>()(
               }
             }),
             deletedModels: [...currentDeletedModels, modelId],
+            selectedModel:
+              state.selectedModel?.id === modelId ? null : state.selectedModel,
           }
         })
       },
@@ -351,6 +361,8 @@ export const useModelProvider = create<ModelProviderState>()(
           providers: state.providers.filter(
             (provider) => provider.provider !== providerName
           ),
+          selectedModel:
+            state.selectedProvider === providerName ? null : state.selectedModel,
         }))
       },
     }),

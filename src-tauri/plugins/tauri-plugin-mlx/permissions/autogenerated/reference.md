@@ -155,6 +155,32 @@ Denies the get_mlx_random_port command without any pre-configured scope.
 <tr>
 <td>
 
+`mlx:allow-get-mlx-resolved-binary-path`
+
+</td>
+<td>
+
+Enables the get_mlx_resolved_binary_path command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`mlx:deny-get-mlx-resolved-binary-path`
+
+</td>
+<td>
+
+Denies the get_mlx_resolved_binary_path command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `mlx:allow-is-mlx-process-running`
 
 </td>
@@ -200,6 +226,32 @@ Enables the load_mlx_model command without any pre-configured scope.
 <td>
 
 Denies the load_mlx_model command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`mlx:allow-set-mlx-custom-binary-path`
+
+</td>
+<td>
+
+Enables the set_mlx_custom_binary_path command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`mlx:deny-set-mlx-custom-binary-path`
+
+</td>
+<td>
+
+Denies the set_mlx_custom_binary_path command without any pre-configured scope.
 
 </td>
 </tr>

@@ -33,6 +33,15 @@ import {
   MlxConfig,
 } from '@janhq/tauri-plugin-mlx-api'
 import { readGgufMetadata, ModelConfig } from '@janhq/tauri-plugin-llamacpp-api'
+import {
+  BUNDLED_VERSION,
+  buildDropdownOptions,
+  activateVersion,
+  downloadVersion,
+  installFromArchive,
+  listAllVersions,
+  fetchRemoteReleases,
+} from './versions'
 
 // Error message constant
 const OUT_OF_CONTEXT_SIZE = 'the request exceeds the available context size.'
@@ -83,6 +92,11 @@ export default class mlx_extension extends AIEngine {
     this.timeout = this.config.timeout ?? 600
 
     this.getProviderPath()
+
+    // Populate the version dropdown and activate the persisted version
+    this.configureBackends().catch((e) =>
+      logger.error('[MLX] configureBackends failed during onLoad:', e)
+    )
   }
 
   async getProviderPath(): Promise<string> {
@@ -299,7 +313,11 @@ export default class mlx_extension extends AIEngine {
     }
 
     const mlxConfig: MlxConfig = {
-      ctx_size: cfg.ctx_size ?? 4096,
+      ctx_size: cfg.ctx_size ?? 8192,
+      kv_bits: cfg.kv_bits ?? 0,
+      max_kv_size: cfg.max_kv_size ?? 0,
+      prefill_step_size: cfg.prefill_step_size ?? 512,
+      memory_limit_gb: cfg.memory_limit_gb ?? 0,
     }
 
     logger.info(
@@ -899,6 +917,152 @@ export default class mlx_extension extends AIEngine {
       return false
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Backend version management
+  // ---------------------------------------------------------------------------
+
+  private isConfiguringBackends = false
+
+  async configureBackends(): Promise<void> {
+    if (this.isConfiguringBackends) return
+    this.isConfiguringBackends = true
+    try {
+      const releases = await listAllVersions()
+      const activeVersion = (this.config.version_backend as string) || BUNDLED_VERSION
+
+      const options = buildDropdownOptions(releases, activeVersion)
+
+      const currentSettings = await this.getSettings()
+      const updated = currentSettings.map((s: any) => {
+        if (s.key !== 'version_backend') return s
+        return {
+          ...s,
+          controllerProps: { ...s.controllerProps, options, value: activeVersion },
+        }
+      })
+      localStorage.setItem(this.name!, JSON.stringify(updated))
+      events.emit('settingsChanged', { extensionName: this.name })
+
+      // Activate the persisted version if it is installed locally
+      if (activeVersion !== BUNDLED_VERSION) {
+        try {
+          await activateVersion(activeVersion)
+          logger.info(`[MLX] Activated version ${activeVersion}`)
+        } catch {
+          logger.warn(`[MLX] Persisted version ${activeVersion} not installed locally; using bundled binary`)
+        }
+      }
+    } catch (e: any) {
+      logger.error('[MLX] configureBackends error:', e)
+    } finally {
+      this.isConfiguringBackends = false
+    }
+  }
+
+  async refreshBackendOptions(): Promise<void> {
+    try {
+      const releases = await listAllVersions()
+      const activeVersion = (this.config.version_backend as string) || BUNDLED_VERSION
+      const options = buildDropdownOptions(releases, activeVersion)
+
+      const currentSettings = await this.getSettings()
+      const updated = currentSettings.map((s: any) => {
+        if (s.key !== 'version_backend') return s
+        return {
+          ...s,
+          controllerProps: { ...s.controllerProps, options },
+        }
+      })
+      localStorage.setItem(this.name!, JSON.stringify(updated))
+      events.emit('settingsChanged', { extensionName: this.name })
+    } catch (e: any) {
+      logger.error('[MLX] refreshBackendOptions error:', e)
+    }
+  }
+
+  async checkBackendForUpdates(): Promise<{
+    updateNeeded: boolean
+    newVersion: string
+    currentVersion?: string
+    targetBackend?: string
+  }> {
+    try {
+      const currentVersion = (this.config.version_backend as string) || BUNDLED_VERSION
+      const releases = await fetchRemoteReleases()
+      if (releases.length === 0) {
+        return { updateNeeded: false, newVersion: currentVersion, currentVersion }
+      }
+
+      const latestVersion = releases[0].version
+      const updateNeeded = currentVersion === BUNDLED_VERSION || currentVersion !== latestVersion
+      return {
+        updateNeeded,
+        newVersion: latestVersion,
+        currentVersion,
+        targetBackend: updateNeeded ? latestVersion : undefined,
+      }
+    } catch (e: any) {
+      logger.warn('[MLX] Failed to check for backend updates:', e)
+      return { updateNeeded: false, newVersion: 'unknown' }
+    }
+  }
+
+  /**
+   * Called by useBackendUpdater when the user clicks "Update Now".
+   * targetBackendString is the version tag (e.g. "v0.1.0") set by checkBackendForUpdates.
+   */
+  async updateBackend(
+    targetBackendString: string
+  ): Promise<{ wasUpdated: boolean; newBackend: string }> {
+    const version = targetBackendString.split('/')[0]?.trim()
+    if (!version) {
+      logger.error(`[MLX] Invalid targetBackendString: "${targetBackendString}"`)
+      return { wasUpdated: false, newBackend: targetBackendString }
+    }
+
+    try {
+      const releases = await fetchRemoteReleases()
+      const release = releases.find((r) => r.version === version)
+      if (!release) {
+        throw new Error(`No release found for version ${version} in ${GITHUB_REPO}`)
+      }
+
+      logger.info(`[MLX] Downloading mlx-server ${version} from ${GITHUB_REPO}`)
+      await downloadVersion(version, release.downloadUrl)
+      await activateVersion(version)
+
+      await this.updateSettings([
+        { key: 'version_backend', controllerProps: { value: version } },
+      ])
+      this.config.version_backend = version
+
+      await this.refreshBackendOptions()
+      logger.info(`[MLX] Successfully updated mlx-server to ${version}`)
+      return { wasUpdated: true, newBackend: version }
+    } catch (e: any) {
+      logger.error('[MLX] Failed to update mlx-server:', e)
+      return { wasUpdated: false, newBackend: targetBackendString }
+    }
+  }
+
+  /**
+   * Called by useBackendUpdater when the user installs a backend from a local file.
+   */
+  async installBackend(archivePath: string): Promise<void> {
+    const { version, binaryPath } = await installFromArchive(archivePath)
+    logger.info(`[MLX] Installed custom binary ${binaryPath} as version ${version}`)
+
+    await activateVersion(version)
+
+    await this.updateSettings([
+      { key: 'version_backend', controllerProps: { value: version } },
+    ])
+    this.config.version_backend = version
+    await this.refreshBackendOptions()
+  }
+
+  // ---------------------------------------------------------------------------
 
   async isToolSupported(modelId: string): Promise<boolean> {
     // Check GGUF/safetensors metadata for tool support
