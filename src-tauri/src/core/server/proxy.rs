@@ -276,6 +276,13 @@ pub(crate) fn normalize_openai_text_format_schema_in_responses_body(body: &mut s
 }
 
 pub(crate) fn normalize_openai_responses_body(body: &mut serde_json::Value) {
+    // Strip fields not supported by local LLMs before forwarding.
+    // `previous_response_id` requires server-side response memory; `store` enables
+    // persistent storage — neither is available in local inference servers.
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("previous_response_id");
+        obj.remove("store");
+    }
     normalize_openai_input_in_responses_body(body);
     normalize_openai_reasoning_in_responses_body(body);
     normalize_unsupported_items_in_responses_body(body);
@@ -591,8 +598,36 @@ pub(crate) fn normalize_unsupported_items_in_responses_body(body: &mut serde_jso
                 });
                 true
             }
+            "local_shell_call_output" => {
+                let Some(call_id) = obj.get("call_id").and_then(|v| v.as_str()) else {
+                    return false;
+                };
+                let output = obj
+                    .get("output")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::String("".to_string()));
+
+                *item = serde_json::json!({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                });
+                true
+            }
+            // Cloud-only item types not supported by local inference servers.
+            // image_generation_call_output is dropped alongside image_generation_call.
+            // computer_call / mcp_* require cloud infrastructure unavailable locally.
             "web_search_call"
             | "image_generation_call"
+            | "image_generation_call_output"
+            | "computer_call"
+            | "computer_call_output"
+            | "mcp_call"
+            | "mcp_call_output"
+            | "mcp_list_resources"
+            | "mcp_approval_request"
+            | "mcp_approval_response"
+            | "item_reference"
             | "compaction"
             | "compaction_summary"
             | "context_compaction"

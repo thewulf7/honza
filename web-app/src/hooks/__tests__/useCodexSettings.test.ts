@@ -11,7 +11,12 @@ describe('useCodexSettings', () => {
   it('initializes with defaults when storage is empty', () => {
     const { result } = renderHook(() => useCodexSettings())
 
-    expect(result.current.settings).toEqual({ model: null })
+    expect(result.current.settings).toEqual({
+      model: null,
+      mcpServerNames: [],
+      binaryPath: '',
+      configFilePath: '',
+    })
   })
 
   it('loads the saved model from storage', () => {
@@ -44,6 +49,11 @@ describe('useCodexSettings', () => {
       result.current.clearSettings()
     })
 
-    expect(result.current.settings).toEqual({ model: null })
+    expect(result.current.settings).toEqual({
+      model: null,
+      mcpServerNames: [],
+      binaryPath: '',
+      configFilePath: '',
+    })
   })
 })

@@ -7,12 +7,16 @@ Rust backend that handles native system integration, file operations, and proces
 ## Key Modules
 
 - **`/src/core/app`** - App state and commands
-- **`/src/core/downloads`** - Model download management  
+- **`/src/core/downloads`** - Model download management
 - **`/src/core/filesystem`** - File system operations
 - **`/src/core/mcp`** - Model Context Protocol
 - **`/src/core/server`** - Local API server
-- **`/src/core/system`** - System information and utilities
+- **`/src/core/system`** - System utilities; includes:
+  - **`codex_agent.rs`** - Spawns the Codex CLI, streams JSONL events via `codex://agent-event`
+  - **`claude_code_agent.rs`** - Spawns the Claude Code CLI, streams JSONL events via `claude://agent-event`
+  - **`commands.rs`** - Codex config management (`parse_codex_config_fields`, `update_codex_config_fields`, `detect_codex_binary`, etc.)
 - **`/src/core/threads`** - Conversation management
+- **`/src/core/state.rs`** - `AppState`; holds cancellation senders for Codex and Claude Code turns
 - **`/utils`** - Shared utility crate (CLI, crypto, HTTP, path utils). Used by plugins and the main backend.
 - **`/plugins`** - Native Tauri plugins ([see plugins guide](./plugins/CONTRIBUTING.md))
 

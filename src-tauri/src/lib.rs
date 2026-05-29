@@ -66,6 +66,16 @@ macro_rules! invoke_commands_with_extras {
         core::system::commands::clear_claude_code_env,
         core::system::commands::write_codex_config,
         core::system::commands::clear_codex_config,
+        core::system::commands::remove_codex_jan_profile,
+        core::system::commands::read_codex_config_raw,
+        core::system::commands::write_codex_config_raw,
+        core::system::commands::parse_codex_config_fields,
+        core::system::commands::update_codex_config_fields,
+        core::system::commands::detect_codex_binary,
+        core::system::codex_agent::codex_run_turn,
+        core::system::codex_agent::codex_stop_turn,
+        core::system::claude_code_agent::claude_run_turn,
+        core::system::claude_code_agent::claude_stop_turn,
         // Server commands
         core::server::commands::start_server,
         core::server::commands::stop_server,
@@ -263,6 +273,8 @@ pub fn run() {
             mcp_server_pids: Arc::new(Mutex::new(HashMap::new())),
             provider_configs: Arc::new(Mutex::new(HashMap::new())),
             mcp_reconnect_notify: Arc::new(tokio::sync::Notify::new()),
+            codex_cancel: Arc::new(Mutex::new(None)),
+            claude_cancel: Arc::new(Mutex::new(None)),
         })
         .setup(|app| {
             app.handle().plugin(

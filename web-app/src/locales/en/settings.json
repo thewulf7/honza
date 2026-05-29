@@ -331,5 +331,95 @@
     "updateError": "Failed to update Llamacpp"
   },
   "backendInstallSuccess": "Backend installed successfully!",
-  "backendInstallError": "Failed to install backend"
+  "backendInstallError": "Failed to install backend",
+  "codex": {
+    "activating": "Activating...",
+    "deactivating": "Deactivating...",
+    "saving": "Saving...",
+    "reset": "Reset",
+    "notSet": "Not set",
+    "cliPaths": {
+      "title": "CLI & Paths",
+      "binaryTitle": "Codex binary",
+      "detecting": "Detecting…",
+      "detectedAt": "Detected at",
+      "notFound": "Not found on PATH. Install Codex CLI or set a custom path below.",
+      "redetect": "Re-detect",
+      "customBinaryTitle": "Custom binary path",
+      "customBinaryDesc": "Override the auto-detected path to the codex executable",
+      "customConfigTitle": "Custom config path",
+      "customConfigDesc": "Override the default config file location (default: ~/.codex/config.toml)"
+    },
+    "janProfile": {
+      "title": "Jan profile",
+      "active": "active",
+      "enableAbove": "· enable above to create",
+      "modelTitle": "Model",
+      "modelDesc": "Model Codex uses in the Jan profile",
+      "approvalPolicyTitle": "Approval Policy",
+      "approvalPolicyDesc": "When to ask for permission before executing",
+      "sandboxModeTitle": "Sandbox Mode",
+      "sandboxModeDesc": "Filesystem/execution sandbox level",
+      "reasoningEffortTitle": "Reasoning Effort",
+      "reasoningEffortDesc": "Effort level for model reasoning (profile override)",
+      "apiUrlTitle": "API server URL",
+      "apiUrlDesc": "Base URL of the Jan local API server"
+    },
+    "globalDefaults": {
+      "title": "Global defaults",
+      "modelTitle": "Model",
+      "modelDesc": "Default model name to use",
+      "providerTitle": "Model Provider",
+      "providerDesc": "Provider for the model",
+      "profileTitle": "Profile",
+      "profileDesc": "Active Codex profile",
+      "shellTitle": "Shell",
+      "shellDesc": "Shell used for running commands"
+    },
+    "behavior": {
+      "title": "Behavior",
+      "reasoningEffortTitle": "Reasoning Effort",
+      "reasoningEffortDesc": "Effort level for model reasoning",
+      "approvalPolicyTitle": "Approval Policy",
+      "approvalPolicyDesc": "When to ask for permission before executing",
+      "sandboxModeTitle": "Sandbox Mode",
+      "sandboxModeDesc": "Filesystem/execution sandbox level"
+    },
+    "limits": {
+      "title": "Limits",
+      "contextWindowTitle": "Context Window",
+      "contextWindowDesc": "Max tokens in the model context window",
+      "autoCompactTitle": "Auto-compact Token Limit",
+      "autoCompactDesc": "Trigger context compaction at this token count",
+      "historyTokensTitle": "History Context Tokens",
+      "historyTokensDesc": "Max tokens to keep from conversation history"
+    },
+    "flags": {
+      "title": "Flags",
+      "disableStorageTitle": "Disable Response Storage",
+      "disableStorageDesc": "Do not persist responses to disk",
+      "notifyTitle": "Notify on Completion",
+      "notifyDesc": "Show a system notification when a task finishes",
+      "hideReasoningTitle": "Hide Agent Reasoning",
+      "hideReasoningDesc": "Collapse model reasoning steps in output",
+      "fullStdoutTitle": "Full Stdout",
+      "fullStdoutDesc": "Print full stdout from commands without truncation"
+    },
+    "approvalPolicy": {
+      "on-failure": "On Failure",
+      "on-request": "On Request",
+      "never": "Never",
+      "always": "Always"
+    },
+    "sandboxMode": {
+      "off": "Off",
+      "workspace-write": "Workspace Write",
+      "danger-full-computer": "Full Computer Access ⚠"
+    },
+    "reasoningEffort": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High"
+    }
+  }
 }

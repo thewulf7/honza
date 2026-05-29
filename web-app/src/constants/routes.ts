@@ -19,8 +19,8 @@ export const route = {
     https_proxy: '/settings/https-proxy',
     hardware: '/settings/hardware',
     assistant: '/settings/assistant',
-    claude_code: '/settings/claude-code',
-    codex: '/settings/codex',
+    agents: '/settings/agents',
+    agentDetail: '/settings/agents/$agentName',
   },
   hub: {
     index: '/hub/',
@@ -29,4 +29,5 @@ export const route = {
   localApiServerlogs: '/local-api-server/logs',
   systemMonitor: '/system-monitor',
   threadsDetail: '/threads/$threadId',
+  agent: '/agent',
 }

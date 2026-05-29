@@ -19,6 +19,8 @@ export const localStorageKey = {
   toolAvailability: 'tool-availability',
   mcpGlobalPermissions: 'mcp-global-permissions',
   lastUsedModel: 'last-used-model',
+  lastUsedAgent: 'last-used-agent',
+  agentWorkingDirectory: 'agent-working-directory',
   lastUsedAssistant: 'last-used-assistant',
   defaultAssistantId: 'default-assistant-id',
   favoriteModels: 'favorite-models',
@@ -28,8 +30,25 @@ export const localStorageKey = {
   recentSearches: 'recent-searches',
   janModelPromptDismissed: 'jan-model-prompt-dismissed',
   agentMode: 'agent-mode',
+  sidebarMode: 'sidebar-mode',
   latestJanModel: 'latest-jan-model',
   defaultEmbeddingModel: 'default-embedding-model',
 }
 
 export const CACHE_EXPIRY_MS = 1000 * 60 * 60 * 24
+
+export const getLastUsedAgent = (): string => {
+  try {
+    return localStorage.getItem(localStorageKey.lastUsedAgent) ?? 'codex'
+  } catch {
+    return 'codex'
+  }
+}
+
+export const setLastUsedAgent = (agentId: string): void => {
+  try {
+    localStorage.setItem(localStorageKey.lastUsedAgent, agentId)
+  } catch {
+    // ignore storage errors
+  }
+}

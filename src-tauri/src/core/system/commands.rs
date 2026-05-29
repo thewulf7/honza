@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_llamacpp::cleanup_llama_processes;
-use toml_edit::{value, DocumentMut, Item, Table};
+use toml_edit::{value, Array, DocumentMut, Item, Table, Value as TomlValue};
 
 use crate::core::app::commands::{
     default_data_folder_path, get_jan_data_folder_path, update_app_configuration,
@@ -762,6 +762,62 @@ fn codex_config_path() -> Result<PathBuf, String> {
     Ok(codex_home.join("config.toml"))
 }
 
+/// Resolve the config file path: use the caller-supplied override when non-empty,
+/// otherwise fall back to the platform default (`~/.codex/config.toml`).
+fn resolve_config_path(override_path: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(p) = override_path.filter(|s| !s.trim().is_empty()) {
+        return Ok(PathBuf::from(p));
+    }
+    codex_config_path()
+}
+
+/// Detect the `codex` CLI binary on the system.
+/// Searches PATH via `which`/`where`, then checks common install locations.
+/// Returns `None` when Codex is not found.
+#[tauri::command]
+pub fn detect_codex_binary() -> Option<String> {
+    // Probe PATH with `which` (Unix) or `where` (Windows).
+    #[cfg(not(target_os = "windows"))]
+    let probe_cmd = "which";
+    #[cfg(target_os = "windows")]
+    let probe_cmd = "where";
+
+    if let Ok(output) = std::process::Command::new(probe_cmd).arg("codex").output() {
+        if output.status.success() {
+            if let Ok(s) = std::str::from_utf8(&output.stdout) {
+                // `where` on Windows may return multiple lines — take the first.
+                let first = s.lines().next().unwrap_or("").trim();
+                if !first.is_empty() {
+                    return Some(first.to_string());
+                }
+            }
+        }
+    }
+
+    // Fall back to well-known install locations.
+    let home = dirs::home_dir()?;
+    let mut candidates: Vec<PathBuf> = vec![
+        home.join(".local/bin/codex"),
+        home.join(".bun/bin/codex"),
+        home.join(".npm-global/bin/codex"),
+        home.join(".volta/bin/codex"),
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from("/usr/bin/codex"),
+    ];
+    #[cfg(target_os = "macos")]
+    candidates.push(PathBuf::from("/opt/homebrew/bin/codex"));
+    #[cfg(target_os = "windows")]
+    candidates.push(home.join("AppData/Roaming/npm/codex.cmd"));
+
+    for path in &candidates {
+        if path.exists() {
+            return Some(path.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
+
 const CODEX_JAN_PROFILE: &str = "jan";
 const CODEX_DEFAULT_MODEL_CONTEXT_WINDOW: i64 = 272_000;
 const CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT: i64 = 244_800;
@@ -779,6 +835,43 @@ fn codex_provider_table(base_url: &str, api_key: Option<&str>) -> Table {
     }
 
     provider
+}
+
+/// Converts a single JSON object (one MCP server entry from Jan) into a TOML table
+/// containing only the fields that Codex's `RawMcpServerConfig` accepts.
+/// Fields like `env` values, `active`, `official`, and Jan-internal metadata are dropped.
+fn json_obj_to_codex_mcp_table(config: &serde_json::Value) -> Option<Table> {
+    let obj = config.as_object()?;
+    let mut tbl = Table::new();
+
+    if let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) {
+        if !cmd.is_empty() {
+            tbl["command"] = value(cmd);
+        }
+    }
+    if let Some(args_json) = obj.get("args").and_then(|v| v.as_array()) {
+        let mut arr = Array::new();
+        for arg in args_json {
+            if let Some(s) = arg.as_str() {
+                arr.push(s);
+            }
+        }
+        if !arr.is_empty() {
+            tbl["args"] = Item::Value(TomlValue::Array(arr));
+        }
+    }
+    if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
+        if !url.is_empty() {
+            tbl["url"] = value(url);
+        }
+    }
+
+    // Only export the entry if it has enough information to be usable
+    if tbl.contains_key("command") || tbl.contains_key("url") {
+        Some(tbl)
+    } else {
+        None
+    }
 }
 
 fn load_codex_document(config_path: &std::path::Path) -> Result<DocumentMut, String> {
@@ -799,8 +892,19 @@ pub fn write_codex_config(
     base_url: String,
     api_key: Option<String>,
     model: Option<String>,
+    context_window: Option<i64>,
+    // Active MCP servers from Jan to forward into Codex's [mcp_servers] table.
+    // Keyed by server name; each value is a JSON object with at least `command`/`args`
+    // (stdio) or `url` (HTTP). Fields unsupported by Codex (e.g. `env` values,
+    // `active`, `official`) are silently ignored.
+    mcp_servers: Option<serde_json::Value>,
+    // Names of MCP servers written by a previous `write_codex_config` call.
+    // These are removed first so stale entries don't accumulate.
+    prev_mcp_server_names: Option<Vec<String>>,
+    // Optional override path for the config file (None → use platform default).
+    config_path_override: Option<String>,
 ) -> Result<(), String> {
-    let config_path = codex_config_path()?;
+    let config_path = resolve_config_path(config_path_override.as_deref())?;
     let config_dir = config_path
         .parent()
         .ok_or_else(|| "Unable to resolve Codex config directory".to_string())?;
@@ -809,10 +913,16 @@ pub fn write_codex_config(
 
     let mut document = load_codex_document(&config_path)?;
     document["profile"] = value(CODEX_JAN_PROFILE);
-    document["model_context_window"] = value(CODEX_DEFAULT_MODEL_CONTEXT_WINDOW);
-    document["model_auto_compact_token_limit"] = value(CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT);
 
-    if !document["model_providers"].is_table() {
+    // Always clear stale context window values first, then re-set if we have a valid one.
+    document.remove("model_context_window");
+    document.remove("model_auto_compact_token_limit");
+    if let Some(w) = context_window.filter(|&w| w > 0) {
+        document["model_context_window"] = value(w);
+        document["model_auto_compact_token_limit"] = value((w * 9) / 10);
+    }
+
+    if !document.get("model_providers").map(|v| v.is_table()).unwrap_or(false) {
         document["model_providers"] = Item::Table(Table::new());
     }
 
@@ -821,7 +931,7 @@ pub fn write_codex_config(
         .ok_or_else(|| "Failed to initialize Codex provider table".to_string())?;
     providers[CODEX_JAN_PROFILE] = Item::Table(codex_provider_table(&base_url, api_key.as_deref()));
 
-    if !document["profiles"].is_table() {
+    if !document.get("profiles").map(|v| v.is_table()).unwrap_or(false) {
         document["profiles"] = Item::Table(Table::new());
     }
 
@@ -831,56 +941,92 @@ pub fn write_codex_config(
 
     let mut jan_profile = Table::new();
     jan_profile["model_provider"] = value(CODEX_JAN_PROFILE);
-    jan_profile["model"] = value(
-        model
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_default(),
-    );
+    // Only write the model key when a model is actually selected; an empty string
+    // would cause Codex to use "" as the model name and fail.
+    if let Some(m) = model.filter(|v| !v.trim().is_empty()) {
+        jan_profile["model"] = value(m);
+    }
+    // Sensible defaults for local-model coding sessions.
+    jan_profile["approval_policy"] = value("on-request");
+    jan_profile["sandbox_mode"] = value("workspace-write");
     profiles[CODEX_JAN_PROFILE] = Item::Table(jan_profile);
+
+    // --- MCP servers ---
+    // First remove any servers from the previous save that are no longer active.
+    if let Some(prev_names) = prev_mcp_server_names {
+        if let Some(mcp_tbl) = document.get_mut("mcp_servers").and_then(|v| v.as_table_mut()) {
+            for name in &prev_names {
+                mcp_tbl.remove(name.as_str());
+            }
+            if mcp_tbl.is_empty() {
+                document.remove("mcp_servers");
+            }
+        }
+    }
+    // Then write the current active servers.
+    if let Some(serde_json::Value::Object(servers_map)) = mcp_servers {
+        if !servers_map.is_empty() {
+            if !document.get("mcp_servers").map(|v| v.is_table()).unwrap_or(false) {
+                let mut implicit = Table::new();
+                implicit.set_implicit(true);
+                document["mcp_servers"] = Item::Table(implicit);
+            }
+            let mcp_tbl = document["mcp_servers"]
+                .as_table_mut()
+                .ok_or_else(|| "Failed to initialize mcp_servers table".to_string())?;
+            for (name, config) in &servers_map {
+                if let Some(server_tbl) = json_obj_to_codex_mcp_table(config) {
+                    mcp_tbl[name.as_str()] = Item::Table(server_tbl);
+                }
+            }
+        }
+    }
 
     fs::write(&config_path, document.to_string()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
-    let config_path = codex_config_path()?;
+pub fn clear_codex_config(
+    model: Option<String>,
+    // Names of MCP servers that `write_codex_config` added to `[mcp_servers]`.
+    // These entries are removed unconditionally when the user resets the integration.
+    mcp_server_names: Option<Vec<String>>,
+    // Optional override path for the config file (None → use platform default).
+    config_path_override: Option<String>,
+) -> Result<(), String> {
+    let config_path = resolve_config_path(config_path_override.as_deref())?;
     if !config_path.exists() {
         return Ok(());
     }
 
     let mut document = load_codex_document(&config_path)?;
 
-    if document["profile"].as_str() == Some(CODEX_JAN_PROFILE) {
+    if document.get("profile").and_then(|v| v.as_str()) == Some(CODEX_JAN_PROFILE) {
         document.remove("profile");
     }
 
-    if document["model_context_window"].as_integer() == Some(CODEX_DEFAULT_MODEL_CONTEXT_WINDOW) {
-        document.remove("model_context_window");
-    }
-
-    if document["model_auto_compact_token_limit"].as_integer()
-        == Some(CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT)
-    {
-        document.remove("model_auto_compact_token_limit");
-    }
-
-    if let Some(providers) = document["model_providers"].as_table_mut() {
+    if let Some(providers) = document.get_mut("model_providers").and_then(|v| v.as_table_mut()) {
         providers.remove(CODEX_JAN_PROFILE);
         if providers.is_empty() {
             document.remove("model_providers");
         }
     }
 
-    if let Some(profiles) = document["profiles"].as_table_mut() {
+    let mut removed_jan_profile = false;
+    if let Some(profiles) = document.get_mut("profiles").and_then(|v| v.as_table_mut()) {
         let should_remove = match profiles.get(CODEX_JAN_PROFILE) {
             Some(Item::Table(profile)) => {
-                profile["model_provider"].as_str() == Some(CODEX_JAN_PROFILE)
+                profile.get("model_provider").and_then(|v| v.as_str()) == Some(CODEX_JAN_PROFILE)
                     && match model.as_deref() {
                         Some(selected_model) if !selected_model.trim().is_empty() => {
-                            profile["model"].as_str() == Some(selected_model)
+                            profile.get("model").and_then(|v| v.as_str()) == Some(selected_model)
                         }
-                        _ => profile["model"].as_str() == Some("")
+                        // Handle both old behavior (model = "") and new behavior (key absent)
+                        _ => {
+                            let saved_model = profile.get("model").and_then(|v| v.as_str());
+                            saved_model.is_none() || saved_model == Some("")
+                        }
                     }
             }
             _ => false,
@@ -888,6 +1034,7 @@ pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
 
         if should_remove {
             profiles.remove(CODEX_JAN_PROFILE);
+            removed_jan_profile = true;
         }
 
         if profiles.is_empty() {
@@ -895,8 +1042,296 @@ pub fn clear_codex_config(model: Option<String>) -> Result<(), String> {
         }
     }
 
+    // Remove context window keys only when Jan's profile was successfully removed,
+    // since Jan owns those keys and removing them unconditionally could affect
+    // other profiles the user has set up.
+    if removed_jan_profile {
+        document.remove("model_context_window");
+        document.remove("model_auto_compact_token_limit");
+    }
+
+    // Remove MCP servers that Jan wrote, regardless of profile match status.
+    // The user explicitly clicked Reset, so all Jan-managed entries should be cleaned up.
+    if let Some(names) = mcp_server_names {
+        if let Some(mcp_tbl) = document.get_mut("mcp_servers").and_then(|v| v.as_table_mut()) {
+            for name in &names {
+                mcp_tbl.remove(name.as_str());
+            }
+            if mcp_tbl.is_empty() {
+                document.remove("mcp_servers");
+            }
+        }
+    }
+
     fs::write(&config_path, document.to_string()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Remove the Jan-managed profile from the Codex config unconditionally.
+/// Removes [profiles.jan] and [model_providers.jan], and clears the global
+/// `profile` key when it points to the Jan profile.
+/// This lets the user switch Codex back to standard (non-Jan) behaviour.
+#[tauri::command]
+pub fn remove_codex_jan_profile(config_path_override: Option<String>) -> Result<(), String> {
+    let config_path = resolve_config_path(config_path_override.as_deref())?;
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let mut document = load_codex_document(&config_path)?;
+
+    if document.get("profile").and_then(|v| v.as_str()) == Some(CODEX_JAN_PROFILE) {
+        document.remove("profile");
+    }
+
+    if let Some(providers) = document.get_mut("model_providers").and_then(|v| v.as_table_mut()) {
+        providers.remove(CODEX_JAN_PROFILE);
+        if providers.is_empty() {
+            document.remove("model_providers");
+        }
+    }
+
+    if let Some(profiles) = document.get_mut("profiles").and_then(|v| v.as_table_mut()) {
+        profiles.remove(CODEX_JAN_PROFILE);
+        if profiles.is_empty() {
+            document.remove("profiles");
+        }
+    }
+
+    fs::write(&config_path, document.to_string()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Read the entire Codex config.toml as a raw string.
+/// Returns an empty string when the file does not yet exist.
+#[tauri::command]
+pub fn read_codex_config_raw(config_path_override: Option<String>) -> Result<String, String> {
+    let config_path = resolve_config_path(config_path_override.as_deref())?;
+    if !config_path.exists() {
+        return Ok(String::new());
+    }
+    fs::read_to_string(&config_path).map_err(|e| e.to_string())
+}
+
+/// Validate `content` as TOML then overwrite the Codex config.toml with it.
+/// The parent directory is created if it does not exist.
+#[tauri::command]
+pub fn write_codex_config_raw(content: String, config_path_override: Option<String>) -> Result<(), String> {
+    // Validate syntax before touching the file.
+    content
+        .parse::<DocumentMut>()
+        .map_err(|e| format!("Invalid TOML: {e}"))?;
+
+    let config_path = resolve_config_path(config_path_override.as_deref())?;
+    let config_dir = config_path
+        .parent()
+        .ok_or_else(|| "Unable to resolve Codex config directory".to_string())?;
+    fs::create_dir_all(config_dir).map_err(|e| e.to_string())?;
+    fs::write(&config_path, content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Structured Codex config field access
+// ---------------------------------------------------------------------------
+
+/// The known top-level scalar fields from Codex's `config.toml`.
+/// All fields are optional — absent keys round-trip as `None`.
+#[derive(serde::Serialize, serde::Deserialize, Default, Debug)]
+pub struct CodexConfigFields {
+    pub model: Option<String>,
+    pub model_provider: Option<String>,
+    pub profile: Option<String>,
+    pub model_reasoning_effort: Option<String>,
+    pub model_context_window: Option<i64>,
+    pub model_auto_compact_token_limit: Option<i64>,
+    pub approval_policy: Option<String>,
+    pub sandbox_mode: Option<String>,
+    pub shell: Option<String>,
+    pub history_max_context_tokens: Option<i64>,
+    pub disable_response_storage: Option<bool>,
+    pub notify_on_completion: Option<bool>,
+    pub hide_agent_reasoning: Option<bool>,
+    pub full_stdout: Option<bool>,
+    // [profiles.jan] fields — only populated when that section exists
+    pub jan_profile_exists: Option<bool>,
+    pub jan_profile_model: Option<String>,
+    pub jan_profile_approval_policy: Option<String>,
+    pub jan_profile_sandbox_mode: Option<String>,
+    pub jan_profile_model_reasoning_effort: Option<String>,
+    // [model_providers.jan] fields
+    pub jan_provider_base_url: Option<String>,
+}
+
+/// Read and return only the known top-level scalar fields from config.toml.
+/// Complex tables (profiles, model_providers, mcp_servers) are left out.
+#[tauri::command]
+pub fn parse_codex_config_fields(config_path_override: Option<String>) -> Result<CodexConfigFields, String> {
+    let config_path = resolve_config_path(config_path_override.as_deref())?;
+    let doc = load_codex_document(&config_path)?;
+    let jan_profile_tbl = doc
+        .get("profiles")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("jan"))
+        .and_then(|v| v.as_table());
+    let jan_provider_tbl = doc
+        .get("model_providers")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("jan"))
+        .and_then(|v| v.as_table());
+    Ok(CodexConfigFields {
+        model: doc.get("model").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        model_provider: doc.get("model_provider").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        profile: doc.get("profile").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        model_reasoning_effort: doc.get("model_reasoning_effort").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        model_context_window: doc.get("model_context_window").and_then(|v| v.as_integer()),
+        model_auto_compact_token_limit: doc.get("model_auto_compact_token_limit").and_then(|v| v.as_integer()),
+        approval_policy: doc.get("approval_policy").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        sandbox_mode: doc.get("sandbox_mode").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        shell: doc.get("shell").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        history_max_context_tokens: doc.get("history_max_context_tokens").and_then(|v| v.as_integer()),
+        disable_response_storage: doc.get("disable_response_storage").and_then(|v| v.as_bool()),
+        notify_on_completion: doc.get("notify_on_completion").and_then(|v| v.as_bool()),
+        hide_agent_reasoning: doc.get("hide_agent_reasoning").and_then(|v| v.as_bool()),
+        full_stdout: doc.get("full_stdout").and_then(|v| v.as_bool()),
+        jan_profile_exists: Some(jan_profile_tbl.is_some()),
+        jan_profile_model: jan_profile_tbl.and_then(|t| t.get("model")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+        jan_profile_approval_policy: jan_profile_tbl.and_then(|t| t.get("approval_policy")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+        jan_profile_sandbox_mode: jan_profile_tbl.and_then(|t| t.get("sandbox_mode")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+        jan_profile_model_reasoning_effort: jan_profile_tbl.and_then(|t| t.get("model_reasoning_effort")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+        jan_provider_base_url: jan_provider_tbl.and_then(|t| t.get("base_url")).and_then(|v| v.as_str()).map(|s| s.to_string()),
+    })
+}
+
+/// Update only the known scalar fields in config.toml, preserving all other
+/// content (complex tables such as profiles, model_providers, mcp_servers).
+/// Returns the new raw TOML so callers can keep the raw editor in sync.
+#[tauri::command]
+pub fn update_codex_config_fields(fields: CodexConfigFields, config_path_override: Option<String>) -> Result<String, String> {
+    let config_path = resolve_config_path(config_path_override.as_deref())?;
+    let config_dir = config_path
+        .parent()
+        .ok_or_else(|| "Unable to resolve Codex config directory".to_string())?;
+    fs::create_dir_all(config_dir).map_err(|e| e.to_string())?;
+
+    let mut doc = load_codex_document(&config_path)?;
+
+    codex_set_or_remove_str(&mut doc, "model", fields.model.as_deref());
+    codex_set_or_remove_str(&mut doc, "model_provider", fields.model_provider.as_deref());
+    codex_set_or_remove_str(&mut doc, "profile", fields.profile.as_deref());
+    codex_set_or_remove_str(
+        &mut doc,
+        "model_reasoning_effort",
+        fields.model_reasoning_effort.as_deref(),
+    );
+    codex_set_or_remove_str(&mut doc, "approval_policy", fields.approval_policy.as_deref());
+    codex_set_or_remove_str(&mut doc, "sandbox_mode", fields.sandbox_mode.as_deref());
+    codex_set_or_remove_str(&mut doc, "shell", fields.shell.as_deref());
+
+    codex_set_or_remove_int(&mut doc, "model_context_window", fields.model_context_window);
+    codex_set_or_remove_int(
+        &mut doc,
+        "model_auto_compact_token_limit",
+        fields.model_auto_compact_token_limit,
+    );
+    codex_set_or_remove_int(
+        &mut doc,
+        "history_max_context_tokens",
+        fields.history_max_context_tokens,
+    );
+
+    codex_set_or_remove_bool(
+        &mut doc,
+        "disable_response_storage",
+        fields.disable_response_storage,
+    );
+    codex_set_or_remove_bool(
+        &mut doc,
+        "notify_on_completion",
+        fields.notify_on_completion,
+    );
+    codex_set_or_remove_bool(
+        &mut doc,
+        "hide_agent_reasoning",
+        fields.hide_agent_reasoning,
+    );
+    codex_set_or_remove_bool(&mut doc, "full_stdout", fields.full_stdout);
+
+    // Update [profiles.jan] when it already exists in the document.
+    // We never auto-create it here — that is done by write_codex_config (Save & Enable).
+    if fields.jan_profile_exists == Some(true) {
+        if let Some(jan) = doc
+            .get_mut("profiles")
+            .and_then(|v| v.as_table_mut())
+            .and_then(|t| t.get_mut("jan"))
+            .and_then(|v| v.as_table_mut())
+        {
+            match fields.jan_profile_model.as_deref() {
+                Some(s) if !s.is_empty() => { jan["model"] = value(s.to_string()); }
+                _ => { jan.remove("model"); }
+            }
+            match fields.jan_profile_approval_policy.as_deref() {
+                Some(s) if !s.is_empty() => { jan["approval_policy"] = value(s.to_string()); }
+                _ => { jan.remove("approval_policy"); }
+            }
+            match fields.jan_profile_sandbox_mode.as_deref() {
+                Some(s) if !s.is_empty() => { jan["sandbox_mode"] = value(s.to_string()); }
+                _ => { jan.remove("sandbox_mode"); }
+            }
+            match fields.jan_profile_model_reasoning_effort.as_deref() {
+                Some(s) if !s.is_empty() => { jan["model_reasoning_effort"] = value(s.to_string()); }
+                _ => { jan.remove("model_reasoning_effort"); }
+            }
+        }
+    }
+
+    // Update [model_providers.jan].base_url when the provider exists.
+    if let Some(new_url) = fields.jan_provider_base_url.as_deref().filter(|s| !s.is_empty()) {
+        if let Some(jan_prov) = doc
+            .get_mut("model_providers")
+            .and_then(|v| v.as_table_mut())
+            .and_then(|t| t.get_mut("jan"))
+            .and_then(|v| v.as_table_mut())
+        {
+            jan_prov["base_url"] = value(new_url.to_string());
+        }
+    }
+
+    let updated = doc.to_string();
+    fs::write(&config_path, &updated).map_err(|e| e.to_string())?;
+    Ok(updated)
+}
+
+fn codex_set_or_remove_str(doc: &mut DocumentMut, key: &str, val: Option<&str>) {
+    match val {
+        Some(s) if !s.is_empty() => {
+            doc[key] = value(s.to_string());
+        }
+        _ => {
+            doc.remove(key);
+        }
+    }
+}
+
+fn codex_set_or_remove_int(doc: &mut DocumentMut, key: &str, val: Option<i64>) {
+    match val {
+        Some(v) => {
+            doc[key] = value(v);
+        }
+        None => {
+            doc.remove(key);
+        }
+    }
+}
+
+fn codex_set_or_remove_bool(doc: &mut DocumentMut, key: &str, val: Option<bool>) {
+    match val {
+        Some(v) => {
+            doc[key] = value(v);
+        }
+        None => {
+            doc.remove(key);
+        }
+    }
 }
 
 /// Determine the best writable directory for the Jan CLI install (Unix only).

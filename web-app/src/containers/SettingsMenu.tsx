@@ -11,7 +11,6 @@ import {
   IconFeather,
   IconPalette,
   IconPlus,
-  IconTerminal2,
   IconTopologyStar3,
   IconLock,
   IconCpu,
@@ -20,6 +19,7 @@ import { useMatches, useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 
 import { useModelProvider } from '@/hooks/useModelProvider'
+import { BUILT_IN_AGENTS, renderAgentTypeIcon } from '@/containers/agents/agentDefinitions'
 import { getProviderTitle, isLocalProvider } from '@/lib/utils'
 import ProvidersAvatar from '@/containers/ProvidersAvatar'
 import { AddProviderDialog } from '@/containers/dialogs'
@@ -31,7 +31,6 @@ import { Button } from '@/components/ui/button'
 const SettingsMenu = () => {
   const { t } = useTranslation()
   const [expandedProviders, setExpandedProviders] = useState(true)
-
   const matches = useMatches()
   const navigate = useNavigate()
 
@@ -189,19 +188,9 @@ const SettingsMenu = () => {
       route: route.settings.mcp_servers,
       icon: IconTopologyStar3,
     },
-    {
-      title: 'common:claude_code',
-      route: route.settings.claude_code,
-      icon: ({ size, className }: { size?: number; className?: string }) => (
-        <img src="/images/code-claude.svg" width={size} height={size} className={cn(className, 'dark:invert opacity-60')} />
-      ),
-    },
-    {
-      title: 'common:codex',
-      route: route.settings.codex,
-      icon: IconTerminal2,
-    },
   ]
+
+  const allAgentItems = BUILT_IN_AGENTS.map((a) => ({ id: a.id, name: a.name, agentType: a.id }))
 
   return (
     <>
@@ -241,6 +230,57 @@ const SettingsMenu = () => {
                   <span>{t(menu.title)}</span>
                 </Link>
               ))}
+            </div>
+          </div>
+
+          {/* Agents section */}
+          <div className="mt-4">
+            <div className="flex items-center justify-between pl-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {t('common:agents')}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => navigate({ to: route.settings.agents })}
+                title={t('common:newAgentProfile')}
+              >
+                <IconPlus size={12} />
+              </Button>
+            </div>
+            <div className="mt-1 flex flex-col gap-0.5">
+              {allAgentItems.map((agent) => {
+                const isActive = matches.some(
+                  (match) =>
+                    match.routeId === '/settings/agents/$agentName' &&
+                    'agentName' in match.params &&
+                    match.params.agentName === agent.id
+                )
+                return (
+                  <div
+                    key={agent.id}
+                    className={cn(
+                      'flex px-2 items-center gap-1.5 cursor-pointer hover:bg-secondary/60 py-1 w-full rounded-sm text-foreground',
+                      isActive && 'bg-secondary'
+                    )}
+                    onClick={() =>
+                      navigate({
+                        to: route.settings.agentDetail,
+                        params: { agentName: agent.id },
+                      })
+                    }
+                  >
+                    {renderAgentTypeIcon(
+                      agent.agentType,
+                      16,
+                      'shrink-0 text-muted-foreground opacity-60'
+                    )}
+                    <div className="truncate flex-1">
+                      <span>{agent.name}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
 

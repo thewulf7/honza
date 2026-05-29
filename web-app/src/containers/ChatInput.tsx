@@ -1,6 +1,6 @@
 import TextareaAutosize from 'react-textarea-autosize'
 import { invoke } from '@tauri-apps/api/core'
-import { cn, formatBytes } from '@/lib/utils'
+import { cn, formatBytes, getModelDisplayName } from '@/lib/utils'
 import { usePrompt } from '@/hooks/usePrompt'
 import { useThreads } from '@/hooks/useThreads'
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
@@ -33,11 +33,14 @@ import {
   IconWorld,
   IconBrandChrome,
   IconUser,
+  IconFolderCode,
 } from '@tabler/icons-react'
 import { generateId } from 'ai'
 import { useMessageQueue } from '@/stores/message-queue-store'
 import { QueuedMessageChip } from '@/containers/QueuedMessageBubble'
-import { BotIcon } from 'lucide-react'
+import { BotIcon, ChevronsUpDown } from 'lucide-react'
+import { useCodexSettings } from '@/hooks/useCodexSettings'
+import { useClaudeCodeModel } from '@/hooks/useClaudeCodeModel'
 import { useTranslation } from '@/i18n/react-i18next-compat'
 import { useGeneralSetting } from '@/hooks/useGeneralSetting'
 import { useModelProvider } from '@/hooks/useModelProvider'
@@ -89,6 +92,8 @@ import JanBrowserExtensionDialog from '@/containers/dialogs/JanBrowserExtensionD
 import { useJanBrowserExtension } from '@/hooks/useJanBrowserExtension'
 import { useAgentMode } from '@/hooks/useAgentMode'
 import { AssistantsMenu } from '@/components/AssistantsMenu'
+import { Badge } from '@/components/ui/badge'
+import { getLastUsedAgent, localStorageKey } from '@/constants/localStorage'
 
 type ChatInputProps = {
   className?: string
@@ -102,7 +107,31 @@ type ChatInputProps = {
   ) => void
   onStop?: () => void
   chatStatus?: ChatStatus
+  agentId?: string
 }
+
+const getAgentWorkingDirectory = () => {
+  try {
+    return localStorage.getItem(localStorageKey.agentWorkingDirectory) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+const setAgentWorkingDirectory = (path: string) => {
+  try {
+    if (path) {
+      localStorage.setItem(localStorageKey.agentWorkingDirectory, path)
+    } else {
+      localStorage.removeItem(localStorageKey.agentWorkingDirectory)
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+const getDirectoryLabel = (path: string) =>
+  path.split(/[\\/]/).filter(Boolean).pop() ?? path
 
 const ChatInput = memo(function ChatInput({
   className,
@@ -111,6 +140,7 @@ const ChatInput = memo(function ChatInput({
   onSubmit,
   onStop,
   chatStatus,
+  agentId: agentIdProp,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isFocused, setIsFocused] = useState(false)
@@ -151,8 +181,6 @@ const ChatInput = memo(function ChatInput({
   const isAgentMode = useAgentMode((state) =>
     state.agentThreads[agentModeKey] === true
   )
-  // When projectId is present, treat as normal chat (disable agent mode UI)
-  const effectiveAgentMode = isAgentMode && !projectId
   const toggleAgentMode = useAgentMode((state) => state.toggleAgentMode)
 
   const handleAgentToggle = useCallback(() => {
@@ -185,6 +213,8 @@ const ChatInput = memo(function ChatInput({
   const activeModels = useAppState(useShallow((state) => state.activeModels))
   const wasPointerDown = useRef(false)
 
+  const [workingDirectory, setWorkingDirectory] = useState(getAgentWorkingDirectory)
+
   // Check if selected model is currently loaded/active
   const isModelActive = selectedModel?.id ? activeModels.includes(selectedModel.id) : false
   const [selectedAssistantId, setSelectedAssistantId] = useState<
@@ -205,6 +235,51 @@ const ChatInput = memo(function ChatInput({
 
   const assistantCount = assistants?.length || 0
 
+  const { t: tSettings } = useTranslation('settings')
+  const { settings: codexSettings } = useCodexSettings()
+  const { models: claudeModels } = useClaudeCodeModel()
+  const allProviders = useModelProvider((state) => state.providers)
+
+  const localSelectedAgentId = agentIdProp ?? getLastUsedAgent()
+  const localSelectedAgentType: AgentType = localSelectedAgentId === 'claude' ? 'claude' : 'codex'
+
+  const modelLookup = useMemo(
+    () => new Map(
+      allProviders.flatMap((provider) =>
+        provider.models.map((model) => [model.id, getModelDisplayName(model as never)])
+      )
+    ),
+    [allProviders]
+  )
+
+  const contextBadges = useMemo(() => {
+    const items: string[] = []
+
+    if (localSelectedAgentType === 'codex') {
+      const codexModel = codexSettings.model
+      if (codexModel) {
+        items.push(modelLookup.get(codexModel) ?? codexModel)
+      }
+      items.push(...codexSettings.mcpServerNames)
+    }
+
+    if (localSelectedAgentType === 'claude') {
+      const claudeRoleKeys = ['medium', 'small', 'big'] as const
+      claudeRoleKeys.forEach((roleKey) => {
+        const modelId = claudeModels[roleKey]
+        if (modelId) {
+          items.push(modelLookup.get(modelId) ?? modelId)
+        }
+      })
+    }
+    return [...new Set(items.filter(Boolean))]
+  }, [
+    claudeModels,
+    codexSettings.mcpServerNames,
+    codexSettings.model,
+    modelLookup,
+    localSelectedAgentType,
+  ])
 
   // Jan Browser Extension hook
   const {
@@ -534,6 +609,50 @@ const ChatInput = memo(function ChatInput({
       }, 10)
     }
   }, [chatStatus])
+
+  const [codexBehavior, setCodexBehavior] = useState({
+    model_reasoning_effort: '',
+    approval_policy: '',
+    sandbox_mode: '',
+  })
+  const codexBehaviorSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (codexBehaviorSaveRef.current) clearTimeout(codexBehaviorSaveRef.current) }, [])
+
+  useEffect(() => {
+    if (!isAgentMode || localSelectedAgentType !== 'codex') return
+    const configPathOverride = codexSettings.configFilePath || null
+    invoke<Record<string, unknown>>('parse_codex_config_fields', { configPathOverride })
+      .then((fields) => {
+        setCodexBehavior({
+          model_reasoning_effort: (fields.model_reasoning_effort as string | null) ?? '',
+          approval_policy: (fields.approval_policy as string | null) ?? '',
+          sandbox_mode: (fields.sandbox_mode as string | null) ?? '',
+        })
+      })
+      .catch(() => {})
+  }, [isAgentMode, localSelectedAgentType, codexSettings.configFilePath])
+
+  const saveCodexBehaviorField = <K extends keyof typeof codexBehavior>(
+    key: K,
+    val: (typeof codexBehavior)[K]
+  ) => {
+    const next = { ...codexBehavior, [key]: val }
+    setCodexBehavior(next)
+    if (codexBehaviorSaveRef.current) clearTimeout(codexBehaviorSaveRef.current)
+    codexBehaviorSaveRef.current = setTimeout(() => {
+      const configPathOverride = codexSettings.configFilePath || null
+      invoke('update_codex_config_fields', {
+        fields: {
+          model_reasoning_effort: next.model_reasoning_effort || null,
+          approval_policy: next.approval_policy || null,
+          sandbox_mode: next.sandbox_mode || null,
+        },
+        configPathOverride,
+      }).catch((err: unknown) => {
+        console.error('Failed to save Codex config field:', err)
+      })
+    }, 300)
+  }
 
   const stopStreaming = useCallback(
     (threadId: string) => {
@@ -1426,6 +1545,23 @@ const ChatInput = memo(function ChatInput({
     }
   }
 
+  const handleSelectWorkingDirectory = async () => {
+    try {
+      const selectedPath = await serviceHub.dialog().open({
+        multiple: false,
+        directory: true,
+        defaultPath: workingDirectory || undefined,
+      })
+
+      if (typeof selectedPath === 'string' && selectedPath !== workingDirectory) {
+        setWorkingDirectory(selectedPath)
+        setAgentWorkingDirectory(selectedPath)
+      }
+    } catch (error) {
+      console.error('Failed to select working directory:', error)
+    }
+  }
+
   const handlePaste = async (e: React.ClipboardEvent) => {
     if (audioSupported) {
       const clipboardItems = e.clipboardData?.items
@@ -1574,6 +1710,32 @@ const ChatInput = memo(function ChatInput({
               </MovingBorder>
             </div>
           )}
+
+          {isAgentMode && (<div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+              <Button
+                variant="outline"
+                size="xs"
+                className="h-7"
+                onClick={() => void handleSelectWorkingDirectory()}
+              >
+                <IconFolderCode size={10} />
+                {workingDirectory ? getDirectoryLabel(workingDirectory) : (
+                <span className="text-xs text-muted-foreground">
+                  No folder selected
+                </span>
+              )}
+              </Button>
+              {contextBadges.map((item) => (
+                <Badge
+                  key={item}
+                  variant="outline"
+                  className="border-input/70 bg-background/60 px-2.5 py-1 text-xs text-muted-foreground"
+                >
+                  {item}
+                </Badge>
+              ))}
+            </div>)
+          }
 
           <div
             className={cn(
@@ -1787,8 +1949,7 @@ const ChatInput = memo(function ChatInput({
                   isStreaming && 'opacity-50 pointer-events-none'
                 )}
               >
-                {/* Dropdown for attachments — hidden in agent mode */}
-                {!effectiveAgentMode && (
+                {/* Attachments dropdown */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="secondary" size="icon-sm" className='rounded-full mr-2 mb-1'>
@@ -1866,8 +2027,7 @@ const ChatInput = memo(function ChatInput({
                       </DropdownMenuSub>
                     )}
                     </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
+                </DropdownMenu>
                 {!projectId && assistantCount >= 2 && (
                   <DropdownMenu>
                     <Tooltip
@@ -1939,7 +2099,7 @@ const ChatInput = memo(function ChatInput({
                     useLastUsedModel={initialMessage}
                   />
                 )} */}
-                {!effectiveAgentMode && hasJanBrowserMCPConfig && modelSupportsBrowser && (
+                {hasJanBrowserMCPConfig && modelSupportsBrowser && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -1981,7 +2141,7 @@ const ChatInput = memo(function ChatInput({
                   </Tooltip>
                 )}
 
-                {!effectiveAgentMode && selectedModel?.capabilities?.includes('embeddings') && (
+                {selectedModel?.capabilities?.includes('embeddings') && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -2000,7 +2160,7 @@ const ChatInput = memo(function ChatInput({
                   </Tooltip>
                 )}
 
-                {!effectiveAgentMode && selectedModel?.capabilities?.includes('tools') &&
+                {selectedModel?.capabilities?.includes('tools') &&
                   hasActiveMCPServers &&
                   (MCPToolComponent ? (
                     // Use custom MCP component
@@ -2096,7 +2256,7 @@ const ChatInput = memo(function ChatInput({
                   </Tooltip>
                 )}
 
-                {!effectiveAgentMode && selectedModel?.capabilities?.includes('web_search') && (
+                {selectedModel?.capabilities?.includes('web_search') && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button variant="ghost" size="icon-xs">
@@ -2112,9 +2272,61 @@ const ChatInput = memo(function ChatInput({
                   </Tooltip>
                 )}
 
-                {!effectiveAgentMode &&
-                  selectedProvider === 'llamacpp' &&
+                {(selectedProvider === 'llamacpp' || isAgentMode) &&
                   (() => {
+                    // Codex mode: reasoning effort (low / medium / high)
+                    if (isAgentMode && localSelectedAgentType === 'codex') {
+                      const effortValue = codexBehavior.model_reasoning_effort
+                      const effortLabel = effortValue
+                        ? tSettings(`codex.reasoningEffort.${effortValue}`, { defaultValue: effortValue })
+                        : '—'
+                      return (
+                        <DropdownMenu>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 gap-1 px-1.5"
+                                >
+                                  <IconBrain
+                                    size={18}
+                                    className={cn(
+                                      'text-muted-foreground',
+                                      effortValue && 'text-primary'
+                                    )}
+                                  />
+                                  <span className="text-xs text-muted-foreground lowercase">
+                                    {effortLabel}
+                                  </span>
+                                </Button>
+                              </DropdownMenuTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{tSettings('codex.behavior.reasoningEffortTitle')}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <DropdownMenuContent align="start">
+                            {(['', 'low', 'medium', 'high'] as const).map((v) => (
+                              <DropdownMenuItem
+                                key={v === '' ? '__unset__' : v}
+                                onClick={() => saveCodexBehaviorField('model_reasoning_effort', v)}
+                              >
+                                {v
+                                  ? tSettings(`codex.reasoningEffort.${v}`, { defaultValue: v })
+                                  : <span className="text-muted-foreground">{tSettings('codex.notSet')}</span>}
+                                {effortValue === v && (
+                                  <span className="ml-auto text-xs text-muted-foreground">✓</span>
+                                )}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )
+                    }
+
+                    // Default: llamacpp reasoning auto / on / off
                     const reasoningValue =
                       (selectedModel?.settings?.reasoning?.controller_props
                         ?.value as 'auto' | 'on' | 'off' | undefined) ?? 'auto'
@@ -2232,7 +2444,6 @@ const ChatInput = memo(function ChatInput({
             <div className="flex items-center gap-2">
               {selectedProvider === 'llamacpp' &&
                 tokenCounterCompact &&
-                !effectiveAgentMode &&
                 !initialMessage &&
                 (threadMessages?.length > 0 || prompt.trim().length > 0) && (
                   <div className="flex-1 flex justify-center">
@@ -2284,6 +2495,58 @@ const ChatInput = memo(function ChatInput({
         </div>
       </div>
 
+      {isAgentMode && localSelectedAgentType === 'codex' && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
+                <span className="text-muted-foreground">{tSettings('codex.behavior.approvalPolicyTitle')}:</span>
+                <span>
+                  {codexBehavior.approval_policy
+                    ? tSettings(`codex.approvalPolicy.${codexBehavior.approval_policy}`, { defaultValue: codexBehavior.approval_policy })
+                    : tSettings('codex.notSet')}
+                </span>
+                <ChevronsUpDown className="size-3 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {(['', 'on-failure', 'on-request', 'never', 'always'] as const).map((v) => (
+                <DropdownMenuItem
+                  key={v === '' ? '__unset__' : v}
+                  onClick={() => saveCodexBehaviorField('approval_policy', v)}
+                >
+                  {v ? tSettings(`codex.approvalPolicy.${v}`, { defaultValue: v }) : <span className="text-muted-foreground">{tSettings('codex.notSet')}</span>}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
+                <span className="text-muted-foreground">{tSettings('codex.behavior.sandboxModeTitle')}:</span>
+                <span>
+                  {codexBehavior.sandbox_mode
+                    ? tSettings(`codex.sandboxMode.${codexBehavior.sandbox_mode}`, { defaultValue: codexBehavior.sandbox_mode })
+                    : tSettings('codex.notSet')}
+                </span>
+                <ChevronsUpDown className="size-3 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {(['', 'off', 'workspace-write', 'danger-full-computer'] as const).map((v) => (
+                <DropdownMenuItem
+                  key={v === '' ? '__unset__' : v}
+                  onClick={() => saveCodexBehaviorField('sandbox_mode', v)}
+                >
+                  {v ? tSettings(`codex.sandboxMode.${v}`, { defaultValue: v }) : <span className="text-muted-foreground">{tSettings('codex.notSet')}</span>}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+
       {message && (
         <div className="-mt-0.5 mx-2 pb-2 px-3 pt-1.5 rounded-b-lg text-xs text-destructive transition-all duration-200 ease-in-out">
           <div className="flex items-center gap-1 justify-between">
@@ -2304,7 +2567,6 @@ const ChatInput = memo(function ChatInput({
 
       {selectedProvider === 'llamacpp' &&
         isModelActive &&
-        !effectiveAgentMode &&
         !tokenCounterCompact &&
         !initialMessage &&
         (threadMessages?.length > 0 || prompt.trim().length > 0) && (

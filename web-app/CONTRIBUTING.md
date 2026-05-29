@@ -7,11 +7,12 @@ React frontend using TypeScript, TanStack Router, Radix UI, and Tailwind CSS. St
 ## Key Directories
 
 - **`/src/components/ui`** - UI components (buttons, dialogs, inputs)
-- **`/src/containers`** - Complex feature components (ChatInput, ThreadContent)  
-- **`/src/hooks`** - Custom React hooks (useChat, useThreads, useAppState)
-- **`/src/routes`** - TanStack Router pages
+- **`/src/containers`** - Complex feature components (ChatInput, DropdownAgent, SettingsMenu)
+- **`/src/containers/agents`** - Agent system: `agentDefinitions`, `builtInAgentSettings`, `AgentSettingsPage`
+- **`/src/hooks`** - Custom React hooks (useChat, useThreads, useCodexAgent, useClaudeCodeAgent)
+- **`/src/routes`** - TanStack Router pages; `/agent` for the unified agent chat, `/settings/agents` for agent configuration
 - **`/src/services`** - API layer for backend communication
-- **`/src/types`** - TypeScript definitions
+- **`/src/types`** - TypeScript definitions (including `agentProfiles.d.ts` for global agent types)
 
 ## Development
 

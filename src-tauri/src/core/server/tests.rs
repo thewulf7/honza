@@ -1368,6 +1368,67 @@ mod tests {
     }
 
     #[test]
+    fn normalize_unsupported_items_in_responses_body_maps_local_shell_call_output() {
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "local_shell_call_output",
+                    "call_id": "shell-1",
+                    "output": {
+                        "output": "total 4\n-rw-r--r-- 1 user group 42 Jan 1 00:00 file.txt",
+                        "metadata": { "exit_code": 0 }
+                    }
+                }
+            ]
+        });
+
+        proxy::normalize_unsupported_items_in_responses_body(&mut body);
+
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        assert_eq!(body["input"][0]["type"], json!("function_call_output"));
+        assert_eq!(body["input"][0]["call_id"], json!("shell-1"));
+        assert!(body["input"][0]["output"].is_object());
+    }
+
+    #[test]
+    fn normalize_unsupported_items_in_responses_body_drops_cloud_only_items() {
+        let mut body = json!({
+            "input": [
+                { "type": "image_generation_call_output", "call_id": "img-1", "result": "data:image/png;base64,abc" },
+                { "type": "computer_call", "call_id": "cpc-1", "action": { "type": "screenshot" } },
+                { "type": "computer_call_output", "call_id": "cpc-1", "output": { "type": "screenshot", "image_url": "" } },
+                { "type": "mcp_call", "call_id": "mcp-1", "name": "read_file", "arguments": {} },
+                { "type": "mcp_call_output", "call_id": "mcp-1", "output": "content" },
+                { "type": "mcp_approval_request", "call_id": "mcp-2", "name": "write_file", "arguments": {} },
+                { "type": "mcp_approval_response", "call_id": "mcp-2", "approve": true },
+                { "type": "item_reference", "id": "msg_abc123" },
+                { "type": "message", "role": "user", "content": [{ "type": "input_text", "text": "ok" }] }
+            ]
+        });
+
+        proxy::normalize_unsupported_items_in_responses_body(&mut body);
+
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        assert_eq!(body["input"][0]["type"], json!("message"));
+    }
+
+    #[test]
+    fn normalize_openai_responses_body_strips_previous_response_id_and_store() {
+        let mut body = json!({
+            "model": "test-model",
+            "input": [],
+            "previous_response_id": "resp_abc123",
+            "store": true
+        });
+
+        proxy::normalize_openai_responses_body(&mut body);
+
+        assert!(body.get("previous_response_id").is_none());
+        assert!(body.get("store").is_none());
+        assert_eq!(body["model"], json!("test-model"));
+    }
+
+    #[test]
     fn add_cors_headers_with_trusted_origin_reflects_origin() {
         let trusted = vec![vec!["localhost".to_string()]];
         let builder = hyper::Response::builder();
