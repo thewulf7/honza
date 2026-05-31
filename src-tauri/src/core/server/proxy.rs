@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use futures_util::StreamExt;
 use hyper::body::Bytes;
 use hyper::service::{make_service_fn, service_fn};
@@ -1078,27 +1079,62 @@ fn mcp_call_result_to_string(result: &CallToolResult) -> String {
 }
 
 pub(crate) fn builtin_openai_tools() -> Vec<serde_json::Value> {
-    vec![serde_json::json!({
-        "type": "function",
-        "function": {
-            "name": "file_edit_tool",
-            "description": "Write content to a file at the given path. Creates the file if it does not exist, or overwrites it entirely if it does.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path of the file to write (absolute or relative to the working directory)"
+    vec![
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "file_edit_tool",
+                "description": "Write content to a file at the given path. Creates the file if it does not exist, or overwrites it entirely if it does.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path of the file to write (absolute or relative to the working directory)"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Full content to write to the file"
+                        }
                     },
-                    "content": {
-                        "type": "string",
-                        "description": "Full content to write to the file"
-                    }
-                },
-                "required": ["path", "content"]
+                    "required": ["path", "content"]
+                }
             }
-        }
-    })]
+        }),
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "image_generation_tool",
+                "description": "Generate an image from a text prompt using a locally running Stable Diffusion compatible API (e.g. Automatic1111, ComfyUI). Configure the server URL via the STABLE_DIFFUSION_API_URL environment variable (default: http://127.0.0.1:7860).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Text description of the image to generate"
+                        },
+                        "negative_prompt": {
+                            "type": "string",
+                            "description": "Text describing what to avoid in the generated image"
+                        },
+                        "steps": {
+                            "type": "integer",
+                            "description": "Number of diffusion steps (default: 20)"
+                        },
+                        "width": {
+                            "type": "integer",
+                            "description": "Output image width in pixels (default: 512)"
+                        },
+                        "height": {
+                            "type": "integer",
+                            "description": "Output image height in pixels (default: 512)"
+                        }
+                    },
+                    "required": ["prompt"]
+                }
+            }
+        }),
+    ]
 }
 
 pub(crate) fn execute_file_edit_tool(args_str: &str) -> String {
@@ -1132,6 +1168,122 @@ pub(crate) fn execute_file_edit_tool(args_str: &str) -> String {
         .to_string(),
         Err(e) => serde_json::json!({"error": format!("Failed to write '{path}': {e}")}).to_string(),
     }
+}
+
+const BLOCKED_IMAGE_TERMS: &[&str] = &["nsfw", "nude", "naked", "explicit", "pornographic"];
+
+pub(crate) async fn execute_image_generation_tool(
+    args_str: &str,
+    client: &Client,
+    output_dir: &str,
+) -> String {
+    let args: serde_json::Value = match serde_json::from_str(args_str) {
+        Ok(v) => v,
+        Err(e) => return serde_json::json!({"error": format!("Invalid arguments: {e}")}).to_string(),
+    };
+
+    let prompt = match args.get("prompt").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return serde_json::json!({"error": "Missing required argument: prompt"}).to_string(),
+    };
+
+    let lower_prompt = prompt.to_lowercase();
+    if BLOCKED_IMAGE_TERMS.iter().any(|&t| lower_prompt.contains(t)) {
+        return serde_json::json!({"error": "Prompt contains content that is not allowed"}).to_string();
+    }
+
+    let api_base = std::env::var("STABLE_DIFFUSION_API_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:7860".to_string());
+    let endpoint = format!("{}/sdapi/v1/txt2img", api_base.trim_end_matches('/'));
+
+    let negative_prompt = args.get("negative_prompt").and_then(|v| v.as_str()).unwrap_or("");
+    let steps = args.get("steps").and_then(|v| v.as_u64()).unwrap_or(20).clamp(1, 150);
+    let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(512).clamp(64, 2048);
+    let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(512).clamp(64, 2048);
+
+    let request_body = serde_json::json!({
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "steps": steps,
+        "width": width,
+        "height": height,
+    });
+
+    log::info!("image_generation_tool: calling {endpoint} (steps={steps}, {width}x{height})");
+
+    let response = match client
+        .post(&endpoint)
+        .header("Content-Type", "application/json")
+        .body(request_body.to_string())
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return serde_json::json!({
+                "error": format!("Image generation server unavailable at {api_base}: {e}"),
+                "fallback": "Start a Stable Diffusion server (e.g. Automatic1111 with --api flag) at the configured URL and retry."
+            })
+            .to_string();
+        }
+    };
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return serde_json::json!({"error": format!("Image generation failed (HTTP {status}): {body}")})
+            .to_string();
+    }
+
+    let response_json: serde_json::Value = match response.json().await {
+        Ok(v) => v,
+        Err(e) => {
+            return serde_json::json!({"error": format!("Failed to parse image generation response: {e}")})
+                .to_string();
+        }
+    };
+
+    let images = match response_json.get("images").and_then(|v| v.as_array()) {
+        Some(arr) if !arr.is_empty() => arr,
+        _ => return serde_json::json!({"error": "No images returned by generation server"}).to_string(),
+    };
+
+    let b64 = match images[0].as_str() {
+        Some(s) => s,
+        None => return serde_json::json!({"error": "Image data is not a base64 string"}).to_string(),
+    };
+
+    // Persist to generated_images/ within jan_data_folder.
+    let images_dir = std::path::Path::new(output_dir).join("generated_images");
+    let saved_path: Option<String> = std::fs::create_dir_all(&images_dir)
+        .ok()
+        .and_then(|_| {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let file_path = images_dir.join(format!("img_{ts}.png"));
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .ok()
+                .and_then(|bytes| std::fs::write(&file_path, bytes).ok())
+                .map(|_| file_path.to_string_lossy().into_owned())
+        });
+
+    let mut result = serde_json::json!({
+        "success": true,
+        "image_data": format!("data:image/png;base64,{b64}"),
+        "prompt": prompt,
+        "width": width,
+        "height": height,
+        "steps": steps,
+    });
+
+    if let Some(path) = saved_path {
+        result["saved_path"] = serde_json::Value::String(path);
+    }
+
+    result.to_string()
 }
 
 async fn router_upstream(
@@ -1418,6 +1570,8 @@ async fn execute_mcp_tool_calls(
     tool_to_server: &HashMap<String, String>,
     mcp_servers: &SharedMcpServers,
     mcp_settings: &Arc<Mutex<McpSettings>>,
+    client: &Client,
+    output_dir: &str,
 ) -> Result<Vec<(String, String)>, String> {
     let timeout_duration = mcp_settings.lock().await.tool_call_timeout_duration();
     let servers = mcp_servers.lock().await;
@@ -1442,6 +1596,14 @@ async fn execute_mcp_tool_calls(
         // Built-in tools are executed locally without routing through an MCP server.
         if tool_name == "file_edit_tool" {
             results.push((tool_call_id, execute_file_edit_tool(args_str)));
+            continue;
+        }
+
+        if tool_name == "image_generation_tool" {
+            results.push((
+                tool_call_id,
+                execute_image_generation_tool(args_str, client, output_dir).await,
+            ));
             continue;
         }
 
@@ -1688,6 +1850,8 @@ async fn run_server_side_openai_orchestration(
             &tool_to_server,
             &mcp_servers,
             &mcp_settings,
+            client,
+            jan_data_folder,
         )
                 .await?;
 
@@ -2494,6 +2658,8 @@ async fn proxy_request(
                     &tool_to_server,
                     &mcp_servers,
                     &mcp_settings,
+                    &client,
+                    &jan_data_folder,
                 )
                 .await
                 {

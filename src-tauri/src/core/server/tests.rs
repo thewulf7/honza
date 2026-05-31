@@ -1616,7 +1616,7 @@ mod tests {
     #[test]
     fn builtin_openai_tools_contains_file_edit_tool() {
         let tools = proxy::builtin_openai_tools();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
         assert_eq!(tools[0]["type"], json!("function"));
         assert_eq!(tools[0]["function"]["name"], json!("file_edit_tool"));
         let params = &tools[0]["function"]["parameters"];
@@ -1626,6 +1626,65 @@ mod tests {
         let required = params["required"].as_array().unwrap();
         assert!(required.contains(&json!("path")));
         assert!(required.contains(&json!("content")));
+    }
+
+    // ── image_generation_tool ──────────────────────────────────────────────
+
+    #[test]
+    fn builtin_openai_tools_includes_image_generation_tool() {
+        let tools = proxy::builtin_openai_tools();
+        assert_eq!(tools.len(), 2);
+        let img_tool = &tools[1];
+        assert_eq!(img_tool["function"]["name"], json!("image_generation_tool"));
+        let params = &img_tool["function"]["parameters"];
+        assert_eq!(params["type"], json!("object"));
+        assert!(params["properties"]["prompt"].is_object());
+        let required = params["required"].as_array().unwrap();
+        assert!(required.contains(&json!("prompt")));
+        assert!(!required.contains(&json!("steps")));
+    }
+
+    #[tokio::test]
+    async fn execute_image_generation_tool_missing_prompt_returns_error() {
+        let client = reqwest::Client::new();
+        let args = serde_json::json!({"steps": 10}).to_string();
+        let result = proxy::execute_image_generation_tool(&args, &client, "/tmp").await;
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("prompt"));
+    }
+
+    #[tokio::test]
+    async fn execute_image_generation_tool_blocked_prompt_returns_error() {
+        let client = reqwest::Client::new();
+        let args = serde_json::json!({"prompt": "a nude figure"}).to_string();
+        let result = proxy::execute_image_generation_tool(&args, &client, "/tmp").await;
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("not allowed"));
+    }
+
+    #[tokio::test]
+    async fn execute_image_generation_tool_invalid_json_returns_error() {
+        let client = reqwest::Client::new();
+        let result = proxy::execute_image_generation_tool("not-json", &client, "/tmp").await;
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["error"].as_str().unwrap().contains("Invalid arguments"));
+    }
+
+    #[tokio::test]
+    async fn execute_image_generation_tool_unreachable_server_returns_fallback() {
+        // Point to a port that should not be listening.
+        std::env::set_var("STABLE_DIFFUSION_API_URL", "http://127.0.0.1:19999");
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let args = serde_json::json!({"prompt": "a sunset over the mountains"}).to_string();
+        let result = proxy::execute_image_generation_tool(&args, &client, "/tmp").await;
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        // Must have an error field and a fallback hint.
+        assert!(parsed.get("error").is_some(), "missing error: {result}");
+        assert!(parsed.get("fallback").is_some(), "missing fallback: {result}");
+        std::env::remove_var("STABLE_DIFFUSION_API_URL");
     }
 
     // ── structured error format ────────────────────────────────────────────
