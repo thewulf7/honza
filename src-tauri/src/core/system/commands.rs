@@ -912,7 +912,6 @@ pub fn write_codex_config(
     fs::create_dir_all(config_dir).map_err(|e| e.to_string())?;
 
     let mut document = load_codex_document(&config_path)?;
-    document["profile"] = value(CODEX_JAN_PROFILE);
 
     // Always clear stale context window values first, then re-set if we have a valid one.
     document.remove("model_context_window");
@@ -952,13 +951,55 @@ pub fn write_codex_config(
             "models": [{
                 "slug": &m,
                 "display_name": &m,
-                "model_context_window": cw,
+                "provider": "jan",
+                "priority": 100,
+                "visibility": "list",
+                "supported_in_api": true,
+                "context_window": cw,
                 "max_context_window": cw,
-                "supports_tools": true,
-                "prefer_websockets": false,
+                "default_reasoning_level": "medium",
+                "supported_reasoning_levels": [
+                    {
+                        "effort": "low",
+                        "description": "Fast responses"
+                    },
+                    {
+                        "effort": "medium",
+                        "description": "Balanced reasoning"
+                    },
+                    {
+                        "effort": "high",
+                        "description": "Deep reasoning"
+                    }
+                ],
+                "shell_type": "shell_command",
+                "base_instructions": "You are a helpful coding assistant.",
+                "model_messages": {
+                    "instructions_template": "{{ base_instructions }}\n\n{{ personality }}",
+                    "instructions_variables": {
+                        "base_instructions": "CODEX_CATALOG_BASE_INSTRUCTIONS",
+                        "personality": "",
+                        "personality_default": "",
+                        "personality_friendly": "",
+                        "personality_pragmatic": ""
+                    }
+                },
+                "supports_reasoning_summaries": true,
+                "default_reasoning_summary": "none",
                 "support_verbosity": true,
                 "default_verbosity": "low",
-                "apply_patch_tool_type": "freeform"
+                "apply_patch_tool_type": "freeform",
+                "web_search_tool_type": "text_and_image",
+                "truncation_policy": {
+                    "mode": "tokens",
+                    "limit": 10000
+                },
+                "supports_parallel_tool_calls": true,
+                "supports_image_detail_original": true,
+                "effective_context_window_percent": 95,
+                "experimental_supported_tools": [],
+                "input_modalities": ["text"],
+                "supports_search_tool": true
             }]
         });
         if fs::write(&catalog_path, serde_json::to_string_pretty(&catalog_json).unwrap_or_default()).is_ok() {
@@ -1559,7 +1600,6 @@ mod tests {
     #[test]
     fn test_codex_profile_config_is_written() {
         let mut document = DocumentMut::new();
-        document["profile"] = value(CODEX_JAN_PROFILE);
         document["model_context_window"] = value(CODEX_DEFAULT_MODEL_CONTEXT_WINDOW);
         document["model_auto_compact_token_limit"] = value(CODEX_DEFAULT_AUTO_COMPACT_TOKEN_LIMIT);
         document["model_providers"] = Item::Table(Table::new());
@@ -1579,7 +1619,6 @@ mod tests {
 
         let output = document.to_string();
 
-        assert!(output.contains("profile = \"jan\""));
         assert!(output.contains("model_context_window = 272000"));
         assert!(output.contains("model_auto_compact_token_limit = 244800"));
         assert!(output.contains("[model_providers.jan]"));
