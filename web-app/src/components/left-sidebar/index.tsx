@@ -1,5 +1,6 @@
 import { DownloadManagement } from '@/containers/DownloadManegement'
 import { NavChats } from './NavChats'
+import { NavCowork } from './NavCowork'
 import { NavMain } from './NavMain'
 import { NavProjects } from './NavProjects'
 import { useLeftPanel } from '@/hooks/useLeftPanel'
@@ -16,6 +17,7 @@ import {
 import { cn } from '@/lib/utils'
 import { MessageCircleIcon } from '@/components/animated-icon/message-circle'
 import { BotIcon } from '@/components/animated-icon/bot'
+import { Workflow } from 'lucide-react'
 
 export function LeftSidebar() {
   const { t } = useTranslation()
@@ -34,7 +36,7 @@ export function LeftSidebar() {
             </div>
           </div>
 
-          {/* Chat / Agents toggle */}
+          {/* Chat / Cowork / Agents toggle */}
           <div className="flex mx-1 mt-1 mb-0.5 p-0.5 bg-sidebar-foreground/6 rounded-lg">
             <button
               type="button"
@@ -49,6 +51,20 @@ export function LeftSidebar() {
             >
               <MessageCircleIcon size={14} />
               {t('common:chats')}
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === 'cowork'}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-1.5 py-1 text-xs font-medium rounded-md transition-all',
+                mode === 'cowork'
+                  ? 'bg-background shadow-sm text-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+              onClick={() => setMode('cowork')}
+            >
+              <Workflow size={14} />
+              {t('common:cowork')}
             </button>
             <button
               type="button"
@@ -69,8 +85,14 @@ export function LeftSidebar() {
           <NavMain />
         </SidebarHeader>
         <SidebarContent className="mask-b-from-95% mask-t-from-98%">
-          <NavProjects />
-          <NavChats />
+          {mode === 'cowork' ? (
+            <NavCowork />
+          ) : (
+            <>
+              <NavProjects />
+              <NavChats />
+            </>
+          )}
         </SidebarContent>
         <SidebarRail />
       </Sidebar>

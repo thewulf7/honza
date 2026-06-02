@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { localStorageKey } from '@/constants/localStorage'
 
-export type SidebarMode = 'chat' | 'agents'
+export type SidebarMode = 'chat' | 'cowork' | 'agents'
 
 type SidebarModeState = {
   mode: SidebarMode

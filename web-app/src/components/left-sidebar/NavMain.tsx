@@ -1,4 +1,5 @@
 import { LucideIcon } from 'lucide-react'
+import { ListTodoIcon } from 'lucide-react'
 import { route } from '@/constants/routes'
 
 import {
@@ -71,7 +72,8 @@ const getNavMainItems = (
   onNewProject: () => void,
   onSearch: () => void,
   onNewChat: () => void,
-  onNewAgentChat: () => void
+  onNewAgentChat: () => void,
+  onNewTask: () => void
 ): NavMainItem[] => [
   {
     title: 'common:newChat',
@@ -100,6 +102,12 @@ const getNavMainItems = (
         <Kbd className="bg-transparent size-3 uppercase">{PlatformShortcuts[ShortcutAction.NEW_AGENT_CHAT].key}</Kbd>
       </KbdGroup>
     ),
+  },
+  {
+    title: 'common:newTask',
+    icon: ListTodoIcon,
+    type: 'cowork',
+    onClick: onNewTask,
   },
   {
     title: 'common:projects.new',
@@ -191,6 +199,9 @@ export function NavMain() {
     () => {
       useAgentMode.getState().setAgentMode(TEMPORARY_CHAT_ID, true)
       navigate({ to: route.agent })
+    },
+    () => {
+      navigate({ to: route.cowork })
     }
   ).filter((item) => !item.type || item.type === mode)
 
