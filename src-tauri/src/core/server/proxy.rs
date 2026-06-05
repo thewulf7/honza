@@ -136,7 +136,6 @@ fn normalize_openai_tool_parameters_schema_at(
 
             // Recurse, with shorthand expansion for keys whose direct children
             // are schema nodes.
-            for (key, v) in map.iter_mut() {
             for (key, value) in map.iter_mut() {
                 match key.as_str() {
                     "properties" | "patternProperties" | "$defs" | "definitions" | "dependentSchemas" => {

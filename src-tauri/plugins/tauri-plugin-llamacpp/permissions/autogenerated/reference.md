@@ -894,6 +894,32 @@ Denies the parse_backend_version command without any pre-configured scope.
 <tr>
 <td>
 
+`llamacpp:allow-plan-model-load`
+
+</td>
+<td>
+
+Enables the plan_model_load command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`llamacpp:deny-plan-model-load`
+
+</td>
+<td>
+
+Denies the plan_model_load command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `llamacpp:allow-prioritize-backends`
 
 </td>

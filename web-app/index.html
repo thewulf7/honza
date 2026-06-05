@@ -28,79 +28,151 @@
     />
     <title>Buro</title>
     <style>
-      /* Inlined so it applies on first paint (external CSS is injected late). */
-      #initial-loader {
-        position: fixed;
-        inset: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 1.5rem;
-        background: hsl(0, 0%, 100%);
-        z-index: 9999;
-        opacity: 1;
-        transition: opacity 0.3s ease-in-out;
-      }
-      .dark #initial-loader {
-        background: rgb(25, 25, 25);
-      }
-      #initial-loader img {
-        width: 5rem;
-        height: 5rem;
-        /* Static first; waves only if setup runs past the delay. */
-        animation: wave 2s ease-in-out 2.5s infinite;
-        transform-origin: 70% 70%;
-      }
-      @keyframes wave {
-        0%,
-        100% {
-          transform: rotate(0deg);
+        html,
+        body {
+          width: 100%;
+          height: 100%;
+          margin: 0;
+          overflow: hidden;
         }
-        10%,
-        30% {
-          transform: rotate(14deg);
+
+        body {
+          position: relative;
+          background: #f3f4fa;
         }
-        20% {
-          transform: rotate(-8deg);
+
+        body::before,
+        body::after {
+          content: "";
+          position: absolute;
+          inset: -20%;
+          pointer-events: none;
         }
-        40%,
-        60% {
-          transform: rotate(14deg);
+
+        body::before {
+          background:
+            radial-gradient(circle at 15% 85%,
+              rgba(120,150,255,.45) 0%,
+              transparent 35%),
+
+            radial-gradient(circle at 50% 100%,
+              rgba(255,170,220,.25) 0%,
+              transparent 35%),
+
+            radial-gradient(circle at 90% 70%,
+              rgba(255,210,180,.30) 0%,
+              transparent 35%),
+
+            radial-gradient(circle at 50% 50%,
+              rgba(190,180,255,.15) 0%,
+              transparent 50%);
+
+          filter: blur(60px);
+
+          animation:
+            drift 5s ease-in-out infinite alternate,
+            breathe 10s ease-in-out infinite;
         }
-        50% {
-          transform: rotate(-8deg);
+
+        body::after {
+          width: 140%;
+          height: 45%;
+          left: -20%;
+          bottom: -15%;
+          inset: auto;
+
+          background: rgba(255,255,255,.25);
+
+          border-radius: 50%;
+          filter: blur(50px);
+
+          animation: wave 10s ease-in-out infinite alternate;
         }
-        70% {
-          transform: rotate(0deg);
+
+        @keyframes drift {
+          0% {
+            transform:
+              translate3d(-2%, 1%, 0)
+              scale(1);
+          }
+
+          100% {
+            transform:
+              translate3d(2%, -2%, 0)
+              scale(2);
+          }
         }
-      }
-      #initial-loader-caption {
-        margin: 0;
-        text-align: center;
-        line-height: 1;
-        font-family:
-          ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
-          sans-serif;
-        font-size: 0.875rem;
-        font-weight: 400;
-        color: hsl(0, 0%, 45%);
-        opacity: 0;
-        /* Delayed so fast starts never flash the caption. */
-        animation: caption-fade-in 0.3s ease-in-out 1s forwards;
-      }
-      .dark #initial-loader-caption {
-        color: hsl(0, 0%, 65%);
-      }
-      @keyframes caption-fade-in {
-        to {
+
+        @keyframes breathe {
+          0%,100% {
+            opacity: .55;
+          }
+
+          50% {
+            opacity: 1;
+          }
+        }
+
+        @keyframes wave {
+          0% {
+            transform:
+              translateY(0)
+              rotate(-1deg);
+          }
+
+          100% {
+            transform:
+              translateY(-200px)
+              rotate(1deg);
+          }
+        }
+
+          /* Inlined so it applies on first paint (external CSS is injected late). */
+        #initial-loader {
+          position: fixed;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 1.5rem;
+          z-index: 9999;
           opacity: 1;
+          transition: opacity 0.3s ease-in-out;
         }
-      }
-      .loaded #initial-loader {
-        opacity: 0;
-        pointer-events: none;
-      }
+        #initial-loader img {
+          width: 5rem;
+          height: 5rem;
+        }
+
+        #initial-loader-caption {
+          margin: 0;
+          text-align: center;
+          line-height: 1;
+        font-family:
+          "SF Pro Display",
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+          font-size: 0.875rem;
+          font-weight: 400;
+          color: hsl(0, 0%, 45%);
+          opacity: 0;
+          /* Delayed so fast starts never flash the caption. */
+          animation: caption-fade-in 0.3s ease-in-out 1s forwards;
+        }
+        .dark #initial-loader-caption {
+          color: hsl(0, 0%, 65%);
+        }
+        @keyframes caption-fade-in {
+          to {
+            opacity: 1;
+          }
+        }
+        .loaded #initial-loader {
+          opacity: 0;
+          pointer-events: none;
+        }
     </style>
     <script>
       // Apply dark class synchronously before first paint to avoid a

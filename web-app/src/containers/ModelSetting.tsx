@@ -1,6 +1,6 @@
 import { IconSettings } from '@tabler/icons-react'
 import debounce from 'lodash.debounce'
-import { useCallback, useEffect, useMemo, useRef, useState, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Sheet,
