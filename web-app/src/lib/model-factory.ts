@@ -62,7 +62,16 @@ import { fetch as httpFetch } from '@tauri-apps/plugin-http'
 import { hasAudioSentinel, splitAudioSentinels } from './audio-sentinel'
 import { isPlatformTauri } from '@/lib/platform/utils'
 import { providerRemoteApiKeyChain } from '@/lib/provider-api-keys'
-import { LLAMACPP_ONLY_PARAM_KEYS } from '@/lib/predefinedParams'
+import {
+  LLAMACPP_ONLY_PARAM_KEYS,
+  paramsSettings,
+} from '@/lib/predefinedParams'
+import {
+  resolveProviderCaps,
+  isModelLevelRejected,
+  getMutualExclusionDrops,
+  getProviderApiType,
+} from '@/lib/providerCaps'
 import { useAppState } from '@/hooks/useAppState'
 
 /**
@@ -183,6 +192,50 @@ function filterParameters(
 }
 
 /**
+ * Strip sampler params the active provider doesn't accept. Built-in providers
+ * with strict capability tables (e.g. real OpenAI rejecting `top_k`) drop the
+ * unsupported keys here so the wire request never carries them. Custom/permissive
+ * providers keep everything — the user opted into an unknown OAI-compat endpoint.
+ *
+ * Unknown keys (not in paramsSettings) pass through untouched so non-sampler
+ * fields like reasoning controls aren't affected.
+ */
+function stripUnsupportedSamplers(
+  parameters: Record<string, unknown>,
+  provider: ProviderObject,
+  modelId: string
+): Record<string, unknown> {
+  const caps = resolveProviderCaps(provider)
+  const exclusionDrops = getMutualExclusionDrops(
+    parameters,
+    provider.provider,
+    getProviderApiType(provider)
+  )
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(parameters)) {
+    if (exclusionDrops.has(k)) continue
+    if (isModelLevelRejected(k, provider.provider, modelId)) continue
+    const def = paramsSettings[k]
+    if (!def) {
+      out[k] = v
+      continue
+    }
+    if (def.capability === 'client_only') {
+      out[k] = v
+      continue
+    }
+    if (def.capability === 'core') {
+      out[k] = v
+      continue
+    }
+    if (caps.supported.has(def.capability) || caps.maybe.has(def.capability)) {
+      out[k] = v
+    }
+  }
+  return out
+}
+
+/**
  * Strip Jinja-stack-trace noise and other diagnostic prelude from upstream
  * error messages so the UI shows the human-readable cause. Examples:
  *
@@ -197,6 +250,27 @@ function filterParameters(
  *
  * Pure / no I/O so it can be exercised from tests.
  */
+/**
+ * Heuristic: does this upstream error look like "this parameter is not
+ * accepted"? Catches OpenAI's "Unsupported parameter", Anthropic's mutual
+ * exclusion, Mistral/Cohere "unknown/disallowed field" shapes, etc.
+ *
+ * Used to gate a one-shot retry with all our injected sampling params
+ * stripped — cheap recovery without parsing per-provider error grammars.
+ */
+export function isSamplingParamRejection(message: string): boolean {
+  if (typeof message !== 'string') return false
+  return (
+    /unsupported parameter/i.test(message) ||
+    /is not supported with this model/i.test(message) ||
+    /cannot both be specified|use only one/i.test(message) ||
+    /unknown field/i.test(message) ||
+    /property\s+['"`][^'"`]+['"`]\s+is unsupported/i.test(message) ||
+    /field\s+['"`][^'"`]+['"`]\s+is not allowed/i.test(message) ||
+    /unrecognized arguments?/i.test(message)
+  )
+}
+
 export function cleanUpstreamErrorMessage(raw: string): string {
   if (typeof raw !== 'string') return raw
   let msg = raw.replace(/\r\n/g, '\n').trim()
@@ -216,6 +290,47 @@ export function cleanUpstreamErrorMessage(raw: string): string {
 }
 
 /**
+ * Map a transport-level fetch failure (no HTTP response — DNS, connect, TLS,
+ * timeout, dropped connection) to an actionable message. `@tauri-apps/plugin-http`
+ * rethrows reqwest's raw "error sending request for url …" string, which isn't
+ * useful to users. Returns null when `err` is not a recognised transport error.
+ */
+export function describeTransportError(err: unknown): string | null {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (typeof raw !== 'string' || !raw) return null
+  const m = raw.toLowerCase()
+
+  const isTransport =
+    /error sending request/.test(m) ||
+    /error trying to connect/.test(m) ||
+    /failed to fetch|networkerror|load failed/.test(m) ||
+    /connection (refused|reset|closed|aborted)/.test(m) ||
+    /connection error|broken pipe/.test(m) ||
+    /dns error|failed to lookup|name resolution/.test(m) ||
+    /(operation|request|connection) timed out|timeout/.test(m) ||
+    /tls|certificate|ssl|handshake/.test(m) ||
+    /unreachable/.test(m)
+  if (!isTransport) return null
+
+  if (/dns error|failed to lookup|name resolution|unreachable/.test(m)) {
+    return "Couldn't reach the provider — the address could not be resolved. Check the provider's Base URL and your internet connection."
+  }
+  if (/timed out|timeout/.test(m)) {
+    return 'The provider took too long to respond and the request timed out. It may be overloaded or slow to start — try again.'
+  }
+  if (/tls|certificate|ssl|handshake/.test(m)) {
+    return "Couldn't establish a secure connection to the provider (TLS/certificate error). Verify the endpoint URL."
+  }
+  return "Couldn't reach the provider — the connection failed. Check the provider's Base URL and your internet connection, then try again."
+}
+
+function requestUrlOf(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.toString()
+  return (input as Request).url ?? ''
+}
+
+/**
  * Create a custom fetch function that injects additional parameters into the
  * request body, normalising key names for OpenAI-compatible APIs:
  * - `max_output_tokens` is remapped to `max_tokens`
@@ -231,42 +346,60 @@ export function createCustomFetch(
   keepLlamacppOnly = false,
   onLlamacppServerError?: () => void
 ): typeof globalThis.fetch {
+  const buildBody = (
+    rawBody: Record<string, unknown>,
+    includeOurParams: boolean
+  ): Record<string, unknown> => {
+    if (!includeOurParams) {
+      decodeAudioSentinelsInBody(rawBody)
+      return rawBody
+    }
+    const normalised: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(parameters)) {
+      if (CLIENT_SIDE_PARAM_KEYS.has(key)) continue
+      if (!keepLlamacppOnly && LLAMACPP_ONLY_PARAM_KEYS.has(key)) continue
+      const targetKey = key === 'max_output_tokens' ? 'max_tokens' : key
+      normalised[targetKey] = value
+    }
+    const merged = { ...rawBody, ...normalised }
+    if (keepLlamacppOnly && merged.stream === true) {
+      merged.return_progress = true
+    }
+    // llama-server convention: max_tokens = -1 means "unlimited". Users who
+    // set max_output_tokens = 0 in assistant params mean "no cap", not
+    // "produce zero tokens" — coerce here, gated to llamacpp only because
+    // OpenAI/Anthropic reject negative values.
+    if (keepLlamacppOnly && merged.max_tokens === 0) {
+      merged.max_tokens = -1
+    }
+    decodeAudioSentinelsInBody(merged)
+    return merged
+  }
+
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    let rawBody: Record<string, unknown> | null = null
     if (init?.method === 'POST' || !init?.method) {
-      const body = init?.body ? JSON.parse(init.body as string) : {}
-
-      // Normalise and merge inference parameters
-      const normalised: Record<string, unknown> = {}
-      for (const [key, value] of Object.entries(parameters)) {
-        if (CLIENT_SIDE_PARAM_KEYS.has(key)) continue
-        if (!keepLlamacppOnly && LLAMACPP_ONLY_PARAM_KEYS.has(key)) continue
-        // max_output_tokens → max_tokens (OpenAI-compatible field name)
-        const targetKey = key === 'max_output_tokens' ? 'max_tokens' : key
-        normalised[targetKey] = value
+      try {
+        rawBody = init?.body ? JSON.parse(init.body as string) : {}
+      } catch (e) {
+        throw new Error(
+          `Failed to parse request body as JSON: ${e instanceof Error ? e.message : String(e)}`
+        )
       }
-
-      const merged = { ...body, ...normalised }
-      if (keepLlamacppOnly && merged.stream === true) {
-        merged.return_progress = true
-      }
-      // llama-server convention: max_tokens = -1 means "unlimited". Users who
-      // set max_output_tokens = 0 in assistant params mean "no cap", not
-      // "produce zero tokens" — coerce here, gated to llamacpp only because
-      // OpenAI/Anthropic reject negative values.
-      if (keepLlamacppOnly && merged.max_tokens === 0) {
-        merged.max_tokens = -1
-      }
-      decodeAudioSentinelsInBody(merged)
-      init = { ...init, body: JSON.stringify(merged) }
+      init = { ...init, body: JSON.stringify(buildBody(rawBody!, true)) }
     }
 
-    const res = await baseFetch(input, init)
+    let res: Response
+    try {
+      res = await baseFetch(input, init)
+    } catch (err) {
+      const friendly = describeTransportError(err)
+      if (!friendly) throw err
+      throw new Error(`${friendly} (${requestUrlOf(input)})`)
+    }
     if (res.ok) return res
 
     const isLlamacpp500 = keepLlamacppOnly && res.status === 500
-    if (isLlamacpp500) {
-      onLlamacppServerError?.()
-    }
 
     let parsed: { error?: { message?: unknown; [k: string]: unknown } } | null =
       null
@@ -285,6 +418,8 @@ export function createCustomFetch(
         : null
 
     if (isLlamacpp500 && !innerMessage) {
+      // 500 with no JSON body = router couldn't reach the child (crash). Recover.
+      onLlamacppServerError?.()
       const synthMessage =
         'The model crashed and is being reloaded. Please retry.'
       const nextBody = JSON.stringify({
@@ -302,6 +437,32 @@ export function createCustomFetch(
     }
 
     if (!innerMessage) return res
+
+    // Sampling-rejection auto-retry: when the upstream complains about an
+    // injected parameter (top_k on OpenAI, temp+top_p on Anthropic, etc.),
+    // retry once with all our injected params stripped, surface a toast so
+    // the user knows their popover knob was ignored this turn, and return
+    // the bare-body response. Only attempts when we have a captured body
+    // and the request looked like a chat completion / messages POST.
+    if (
+      rawBody &&
+      res.status >= 400 &&
+      res.status < 500 &&
+      isSamplingParamRejection(innerMessage) &&
+      Object.keys(parameters).length > 0
+    ) {
+      const bareInit = {
+        ...init,
+        body: JSON.stringify(buildBody(rawBody, false)),
+      }
+      const retry = await baseFetch(input, bareInit)
+      if (retry.ok) {
+        notifySamplingStripped(innerMessage)
+        return retry
+      }
+      // Retry also failed — fall through to surface the cleaned original error.
+    }
+
     const cleaned = cleanUpstreamErrorMessage(innerMessage)
     if (cleaned === innerMessage) return res
     const nextBody = JSON.stringify({
@@ -314,6 +475,22 @@ export function createCustomFetch(
       headers: res.headers,
     })
   }
+}
+
+let lastSamplingNoticeAt = 0
+function notifySamplingStripped(reason: string): void {
+  const now = Date.now()
+  if (now - lastSamplingNoticeAt < 3000) return
+  lastSamplingNoticeAt = now
+  void import('sonner')
+    .then(({ toast }) => {
+      toast.warning('Sampling parameters dropped', {
+        description: `${cleanUpstreamErrorMessage(reason)} — request retried without your sampling overrides. Adjust in the Sampling popover.`,
+      })
+    })
+    .catch(() => {
+      console.warn('[sampling-retry]', reason)
+    })
 }
 
 /**
@@ -486,6 +663,14 @@ export class ModelFactory {
     parameters: Record<string, unknown> = {}
   ): Promise<LanguageModel> {
     const providerName = provider.provider.toLowerCase()
+    parameters = stripUnsupportedSamplers(parameters, provider, modelId)
+
+    // Wire-format dispatch wins over name-based dispatch — custom providers
+    // pointing at Anthropic-compatible proxies (LiteLLM, Bedrock gateways)
+    // need the Anthropic SDK regardless of the user-chosen provider name.
+    if (getProviderApiType(provider) === 'anthropic' && providerName !== 'anthropic') {
+      return this.createAnthropicModel(modelId, provider, parameters)
+    }
 
     switch (providerName) {
       case 'llamacpp':
@@ -565,9 +750,9 @@ export class ModelFactory {
             try {
               const { useServiceStore } = await import('@/hooks/useServiceHub')
               const hub = useServiceStore.getState().serviceHub
-              await hub?.models().startModel(provider, modelId)
+              await hub?.models().reloadModel(provider, modelId)
             } catch (e) {
-              console.warn('[llamacpp] reload after 500 failed:', e)
+              console.warn('[llamacpp] reload after crash failed:', e)
             }
           })()
         }
@@ -644,7 +829,16 @@ export class ModelFactory {
       init?: RequestInit
     ): Promise<Response> => {
       if (init?.method === 'POST' || !init?.method) {
-        const body = init?.body ? JSON.parse(init.body as string) : {}
+        let body: Record<string, unknown> = {}
+        if (init?.body) {
+          try {
+            body = JSON.parse(init.body as string)
+          } catch (e) {
+            throw new Error(
+              `Failed to parse MLX request body as JSON: ${e instanceof Error ? e.message : String(e)}`
+            )
+          }
+        }
         const mergedBody = { ...body, ...parameters }
         init = { ...init, body: JSON.stringify(mergedBody) }
       }

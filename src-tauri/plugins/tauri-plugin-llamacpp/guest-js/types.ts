@@ -73,8 +73,13 @@ export interface HubModelScoreResult {
 
 // llama.cpp settings
 export type LlamacppConfig = {
+  llamacpp_version: string
+  llamacpp_backend: string
+  /** Composed from llamacpp_version + llamacpp_backend as `${version}/${backend}`. Not user-settable. */
   version_backend: string
   auto_update_engine: boolean
+  check_for_updates: boolean
+  verify_backend_deps: boolean
   auto_unload: boolean
   models_max: string | number
   timeout: number
@@ -104,7 +109,6 @@ export type LlamacppConfig = {
   no_kv_offload: boolean
   cache_type_k: string
   cache_type_v: string
-  defrag_thold: number
   rope_scaling: string
   rope_scale: number
   rope_freq_base: number
@@ -190,6 +194,7 @@ export type BackendFeatures = {
   cuda12: boolean
   cuda13: boolean
   vulkan: boolean
+  hip: boolean
 }
 
 export type SupportedFeatures = {

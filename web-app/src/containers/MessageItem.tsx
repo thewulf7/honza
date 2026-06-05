@@ -21,7 +21,13 @@ import {
 import { CopyButton } from './CopyButton'
 import { formatDate } from '@/utils/formatDate'
 import { useModelProvider } from '@/hooks/useModelProvider'
-import { IconRefresh, IconPaperclip, IconArrowDown } from '@tabler/icons-react'
+import { useMessageErrors } from '@/stores/message-errors'
+import {
+  IconRefresh,
+  IconPaperclip,
+  IconArrowDown,
+  IconAlertTriangle,
+} from '@tabler/icons-react'
 import { EditMessageDialog } from '@/containers/dialogs/EditMessageDialog'
 import { DeleteMessageDialog } from '@/containers/dialogs/DeleteMessageDialog'
 import TokenSpeedIndicator from '@/containers/TokenSpeedIndicator'
@@ -67,6 +73,7 @@ export type MessageItemProps = {
 export const MessageItem = memo(
   ({
     message,
+    isFirstMessage,
     isLastMessage,
     status,
     isAnimating,
@@ -81,6 +88,7 @@ export const MessageItem = memo(
   }: MessageItemProps) => {
     const selectedModel = useModelProvider((state) => state.selectedModel)
     const metadata = message.metadata as Record<string, unknown> | undefined
+    const messageError = useMessageErrors((s) => s.errors[message.id])
     const createdAt = (metadata?.createdAt as Date) ?? new Date()
     const [previewImage, setPreviewImage] = useState<{
       url: string
@@ -236,14 +244,14 @@ export const MessageItem = memo(
         <div key={`${message.id}-${partIndex}`} className="w-full">
           {message.role === 'user' ? (
             <div className="flex justify-end w-full h-full text-start wrap-break-word whitespace-normal">
-              <div className="bg-secondary relative text-foreground p-2 rounded-md inline-block max-w-[80%]">
+              <div className="bg-primary relative text-primary-foreground p-2 rounded-md inline-block max-w-[80%]">
                 {/* Show attached files if any */}
                 {attachedFiles.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-3">
                     {attachedFiles.map((file: FileMetadata, idx: number) => (
                       <div
                         key={`file-${idx}-${file.id}`}
-                        className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-secondary border text-xs"
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-sm bg-secondary text-secondary-foreground border text-xs"
                       >
                         <IconPaperclip
                           size={14}
@@ -534,7 +542,12 @@ export const MessageItem = memo(
     }, [message.parts, isStreaming, isReasoningAtBottom, grounding])
 
     return (
-      <div className="w-full mb-4">
+      <div
+        className={cn(
+          'w-full mb-4 group/message',
+          message.role === 'user' && !isFirstMessage && 'mt-8'
+        )}
+      >
 
         {/* Render message parts */}
         {renderedParts}
@@ -545,9 +558,38 @@ export const MessageItem = memo(
             <PromptProgress />
           )}
 
+        {typeof messageError === 'string' && messageError.length > 0 && (
+          <div className="mt-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+            <IconAlertTriangle
+              size={16}
+              className="mt-0.5 shrink-0 text-destructive"
+            />
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-destructive">
+                Generation failed
+              </div>
+              <div className="text-muted-foreground break-words">
+                {messageError}
+              </div>
+            </div>
+            {selectedModel && onRegenerate && status !== CHAT_STATUS.STREAMING &&
+              status !== CHAT_STATUS.SUBMITTED && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRegenerate}
+                  className="shrink-0"
+                >
+                  <IconRefresh size={14} />
+                  <span>Regenerate</span>
+                </Button>
+              )}
+          </div>
+        )}
+
         {/* Message actions for user messages */}
         {message.role === 'user' && !hideActions && (
-          <div className="flex items-center justify-end gap-1 text-muted-foreground text-xs">
+          <div className="flex items-center justify-end gap-1 text-muted-foreground text-xs opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
             <span className="text-muted-foreground">
               {formatDate(createdAt)}
             </span>

@@ -3,6 +3,8 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { localStorageKey } from '@/constants/localStorage'
 import { getServiceHub } from '@/hooks/useServiceHub'
 import { modelSettings } from '@/lib/predefined'
+import { predefinedProviders } from '@/constants/providers'
+import { isLocalProvider } from '@/lib/utils'
 import {
   API_KEY_FALLBACKS_SETTING_KEY,
   parseApiKeyFallbacks,
@@ -82,6 +84,24 @@ export const useModelProvider = create<ModelProviderState>()(
             ? state.deletedModels
             : []
 
+          // For local providers (llamacpp, mlx) the engine's list() is the
+          // source of truth: a model only appears here if it is on disk. If
+          // an id was previously soft-deleted but reappears in a fresh local
+          // listing, the user has re-downloaded/re-imported it and the
+          // tombstone must be cleared — otherwise the merge below filters it
+          // out forever.
+          const locallyPresentIds = new Set<string>()
+          for (const p of providers) {
+            if (!isLocalProvider(p.provider)) continue
+            for (const m of p.models ?? []) {
+              if (m?.id) locallyPresentIds.add(m.id)
+            }
+          }
+          const effectiveDeletedModels =
+            locallyPresentIds.size === 0
+              ? currentDeletedModels
+              : currentDeletedModels.filter((id) => !locallyPresentIds.has(id))
+
           const updatedProviders = providers.map((provider) => {
             const existingProvider = existingProviders.find(
               (x) => x.provider === provider.provider
@@ -97,7 +117,7 @@ export const useModelProvider = create<ModelProviderState>()(
                   ('id' in e || 'model' in e) &&
                   typeof (e.id ?? e.model) === 'string' &&
                   !models.some((m) => m.id === e.id) &&
-                  !currentDeletedModels.includes(e.id)
+                  !effectiveDeletedModels.includes(e.id)
               ),
               ...models,
             ]
@@ -151,11 +171,22 @@ export const useModelProvider = create<ModelProviderState>()(
                 : existingProvider?.settings?.find(
                     (x) => x.key === setting.key
                   )
+              // Only the user's `value` is carried over from existing state;
+              // metadata like `recommended` / `options` must always reflect
+              // the fresh extension fetch (otherwise stale recommendations
+              // and stale option lists outlive the underlying setting).
+              const existingValue = (
+                existingSetting?.controller_props as
+                  | { value?: string | number | boolean }
+                  | undefined
+              )?.value
               return {
                 ...setting,
                 controller_props: {
                   ...setting.controller_props,
-                  ...(existingSetting?.controller_props || {}),
+                  ...(existingSetting && existingValue !== undefined
+                    ? { value: existingValue }
+                    : {}),
                 },
               }
             })
@@ -266,19 +297,16 @@ export const useModelProvider = create<ModelProviderState>()(
             }
           }
 
-          const selectedModelId = state.selectedModel?.id
-          const selectedModelStillExists =
-            !selectedModelId ||
-            nextProviders.some((p) => p.models?.some((m) => m.id === selectedModelId))
-
-          return {
-            providers: nextProviders,
-            selectedModel: selectedModelStillExists ? state.selectedModel : null,
-          }
+          return effectiveDeletedModels === currentDeletedModels
+            ? { providers: nextProviders }
+            : {
+                providers: nextProviders,
+                deletedModels: effectiveDeletedModels,
+              }
         }),
       updateProvider: (providerName, data) => {
-        set((state) => ({
-          providers: state.providers.map((provider) => {
+        set((state) => {
+          const providers = state.providers.map((provider) => {
             if (provider.provider === providerName) {
               return {
                 ...provider,
@@ -286,8 +314,23 @@ export const useModelProvider = create<ModelProviderState>()(
               }
             }
             return provider
-          }),
-        }))
+          })
+
+          let selectedModel = state.selectedModel
+          if (
+            selectedModel &&
+            state.selectedProvider === providerName &&
+            Array.isArray(data.models)
+          ) {
+            selectedModel =
+              data.models.find((model) => model.id === selectedModel?.id) ?? null
+          }
+
+          return {
+            providers,
+            selectedModel,
+          }
+        })
       },
       getProviderByName: (providerName: string) => {
         const provider = get().providers.find(
@@ -649,24 +692,9 @@ export const useModelProvider = create<ModelProviderState>()(
           )
         }
 
-        if (version <= 10 && state?.providers) {
-          state.providers.forEach((provider) => {
-            if (provider.models && provider.provider === 'llamacpp') {
-              provider.models.forEach((model) => {
-                if (!model.settings) model.settings = {}
-
-                if (!model.settings.auto_increase_ctx_len) {
-                  model.settings.auto_increase_ctx_len = {
-                    ...modelSettings.auto_increase_ctx_len,
-                    controller_props: {
-                      ...modelSettings.auto_increase_ctx_len.controller_props,
-                    },
-                  }
-                }
-              })
-            }
-          })
-        }
+        // Migration v10 historically inserted `auto_increase_ctx_len`. The
+        // setting was removed in v15, so v10 is now a no-op for any user
+        // still passing through this point.
 
         if (version <= 11 && state?.providers) {
           state.providers.forEach((provider) => {
@@ -697,6 +725,25 @@ export const useModelProvider = create<ModelProviderState>()(
           })
         }
 
+        if (version <= 13 && state?.providers) {
+          // Predefined providers no longer carry a user-editable base-url
+          // setting. Force their base_url back to the canonical constant and
+          // strip any leftover base-url entry from persisted settings[].
+          const canonicalByName = new Map(
+            predefinedProviders.map((p) => [p.provider, p.base_url])
+          )
+          state.providers.forEach((provider) => {
+            const canonical = canonicalByName.get(provider.provider)
+            if (!canonical) return
+            provider.base_url = canonical
+            if (provider.settings) {
+              provider.settings = provider.settings.filter(
+                (s) => s.key !== 'base-url'
+              )
+            }
+          })
+        }
+
         if (version <= 12 && state?.providers) {
           // Reset ctx_len from the prior 8192 default to '' so llama.cpp picks
           // (auto-fit when enabled, model default otherwise). Preserve any
@@ -707,14 +754,77 @@ export const useModelProvider = create<ModelProviderState>()(
               const ctx = model.settings?.ctx_len as
                 | { controller_props?: { value?: unknown } }
                 | undefined
-              if (ctx?.controller_props?.value === 8192) {
-                ctx.controller_props.value = ''
+              const controllerProps = ctx?.controller_props
+              const ctxValue =
+                typeof controllerProps?.value === 'string'
+                  ? Number(controllerProps.value)
+                  : controllerProps?.value
+              if (ctxValue === 8192 && controllerProps) {
+                controllerProps.value = ''
               }
             })
           })
         }
 
         if (version <= 13 && state?.providers) {
+          // `defrag-thold` was deprecated upstream and the control was deleted
+          // from settings.json. Strip the orphan entry from the persisted
+          // provider settings array so localStorage doesn't carry it forever.
+          state.providers.forEach((provider) => {
+            if (provider.provider !== 'llamacpp' || !provider.settings) return
+            provider.settings = provider.settings.filter(
+              (s) => s.key !== 'defrag_thold'
+            )
+          })
+        }
+
+        if (version <= 14 && state?.providers) {
+          // Auto-increase context was removed — the manual "Increase Context
+          // Size" button in the error banner now owns this. Strip the per-model
+          // setting entry from llamacpp models so the sidebar doesn't render a
+          // dead control.
+          state.providers.forEach((provider) => {
+            if (provider.provider !== 'llamacpp' || !provider.models) return
+            provider.models.forEach((model) => {
+              if (model.settings?.auto_increase_ctx_len) {
+                delete (model.settings as Record<string, unknown>)
+                  .auto_increase_ctx_len
+              }
+            })
+          })
+        }
+        if (version <= 15 && state?.providers) {
+          // Introduce `api_type` discriminant. Backfill on the built-in
+          // Anthropic provider; everything else stays undefined (defaults to
+          // 'openai' at dispatch time).
+          state.providers.forEach((provider) => {
+            if (provider.provider === 'anthropic' && !provider.api_type) {
+              provider.api_type = 'anthropic'
+            }
+          })
+        }
+
+        if (version <= 16 && state?.providers) {
+          // Auto-fit is now disabled by default, so seed empty/auto ctx_len
+          // with the new 8192 default. Preserve any user-customised value.
+          state.providers.forEach((provider) => {
+            if (provider.provider !== 'llamacpp' || !provider.models) return
+            provider.models.forEach((model) => {
+              const ctx = model.settings?.ctx_len as
+                | { controller_props?: { value?: unknown } }
+                | undefined
+              const controllerProps = ctx?.controller_props
+              if (!controllerProps) return
+              const value = controllerProps.value
+              if (value === '' || value == null) {
+                controllerProps.value = 8192
+              }
+            })
+          })
+        }
+
+
+        if (version <= 17 && state?.providers) {
           state.providers.forEach((provider) => {
             if (provider.models && provider.provider === 'llamacpp') {
               provider.models.forEach((model) => {
@@ -753,7 +863,7 @@ export const useModelProvider = create<ModelProviderState>()(
 
         return state
       },
-      version: 14,
+      version: 18,
     }
   )
 )

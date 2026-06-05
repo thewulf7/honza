@@ -20,7 +20,7 @@ import { route } from '@/constants/routes'
 import DeleteProvider from '@/containers/dialogs/DeleteProvider'
 import { useServiceHub } from '@/hooks/useServiceHub'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { SecretInput } from '@/components/ui/secret-input'
 import { Switch } from '@/components/ui/switch'
 import {
   IconCircleCheck,
@@ -150,11 +150,13 @@ function ProviderDetail() {
   ])
 
   // Check if llamacpp/mlx provider needs backend configuration
+  const isBackendKey = (k: string) =>
+    k === 'llamacpp_version' || k === 'llamacpp_backend'
   const needsBackendConfig =
     (provider?.provider === 'llamacpp' || provider?.provider === 'mlx') &&
     provider.settings?.some(
       (setting) =>
-        setting.key === 'version_backend' &&
+        isBackendKey(setting.key) &&
         (setting.controller_props.value === 'none' ||
           setting.controller_props.value === '' ||
           !setting.controller_props.value)
@@ -657,16 +659,26 @@ function ProviderDetail() {
 
     setIsInstallingBackend(true)
     try {
-      // Open file dialog with filter for .tar.gz and .zip files
+      // macOS NSOpenPanel maps filter strings to UTTypes via
+      // typeWithFilenameExtension:, which only accepts single-component
+      // extensions. `.tar.gz` resolves to org.gnu.gnu-zip-tar-archive,
+      // which is a sibling — not a child — of `.gz`'s UTType, so neither
+      // a `tar.gz` nor `gz` filter enables `.tar.gz` files in the picker.
+      // Skip the filter on macOS and revalidate after the pick.
+      const isMac =
+        typeof navigator !== 'undefined' &&
+        navigator.userAgent.toUpperCase().includes('MAC')
       const selectedFile = await serviceHub.dialog().open({
         multiple: false,
         directory: false,
-        filters: [
-          {
-            name: 'Backend Archives',
-            extensions: ['tar.gz', 'zip', 'gz'],
-          },
-        ],
+        filters: isMac
+          ? undefined
+          : [
+              {
+                name: 'Backend Archives',
+                extensions: ['tar.gz', 'zip'],
+              },
+            ],
       })
 
       if (selectedFile && typeof selectedFile === 'string') {
@@ -737,6 +749,18 @@ function ProviderDetail() {
                 </div>
               )}
 
+            {provider?.provider === 'mlx' && (
+              <div className="flex items-start gap-2 rounded-md border border-main-view-fg/10 bg-main-view-fg/5 px-3 py-2 text-xs text-muted-foreground">
+                <IconInfoCircle size={16} className="mt-0.5 shrink-0" />
+                <span>
+                  {t('providers:mlxExperimental', {
+                    defaultValue:
+                      'MLX support is experimental. Embeddings are unavailable, the reasoning toggle is not yet wired through, and some newer model architectures may fail to load. Report issues on GitHub so we can prioritize them.',
+                  })}
+                </span>
+              </div>
+            )}
+
             <div
               className={cn(
                 'flex flex-col gap-3',
@@ -773,8 +797,7 @@ function ProviderDetail() {
                   // Use the DynamicController component
                   const actionComponent = (
                     <div className="mt-2">
-                      {needsBackendConfig &&
-                      setting.key === 'version_backend' ? (
+                      {needsBackendConfig && isBackendKey(setting.key) ? (
                         <div className="flex items-center gap-1 text-sm">
                           <IconLoader size={16} className="animate-spin" />
                           <span>loading</span>
@@ -814,8 +837,8 @@ function ProviderDetail() {
                                 updateObj.base_url = newValue
                               }
 
-                              // Reset device setting to empty when backend version changes
-                              if (settingKey === 'version_backend') {
+                              // Reset device setting to empty when backend or version changes
+                              if (isBackendKey(settingKey)) {
                                 const deviceSettingIndex =
                                   newSettings.findIndex(
                                     (s) => s.key === 'device'
@@ -864,10 +887,6 @@ function ProviderDetail() {
                     </div>
                   )
 
-                  if (isPredefinedProvider && setting.key === 'base-url') {
-                    return null
-                  }
-
                   return (
                     <CardItem
                       key={settingIndex}
@@ -900,19 +919,16 @@ function ProviderDetail() {
                               ),
                             }}
                           />
-                          {setting.key === 'version_backend' &&
+                          {setting.key === 'llamacpp_backend' &&
                             setting.controller_props?.recommended && (
                               <div className="mt-1 text-sm text-muted-foreground">
                                 <span className="font-medium">
-                                  {setting.controller_props.recommended
-                                    ?.split('/')
-                                    .pop() ||
-                                    setting.controller_props.recommended}
+                                  {setting.controller_props.recommended}
                                 </span>
                                 <span> is the recommended backend.</span>
                               </div>
                             )}
-                          {setting.key === 'version_backend' &&
+                          {setting.key === 'llamacpp_backend' &&
                             (provider?.provider === 'llamacpp' ||
                               provider?.provider === 'mlx') && (
                               <div className="mt-2 flex flex-wrap gap-2">
@@ -985,8 +1001,7 @@ function ProviderDetail() {
                       </div>
                       {!showAdvancedApiKeys && (
                         <div className="flex flex-col gap-2">
-                          <Input
-                            type="password"
+                          <SecretInput
                             className="font-mono"
                             placeholder={t('providers:apiKeys.primaryPlaceholder')}
                             value={primaryKeyDraft}
@@ -1076,8 +1091,7 @@ function ProviderDetail() {
                                   </div>
 
                                   <div className="min-w-0">
-                                    <Input
-                                      type="password"
+                                    <SecretInput
                                       className="font-mono w-full"
                                       placeholder={t('providers:apiKeys.keyPlaceholder')}
                                       value={keyValue}

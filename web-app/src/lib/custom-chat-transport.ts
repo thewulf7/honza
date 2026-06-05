@@ -36,6 +36,8 @@ import { mcpOrchestrator } from '@/lib/mcp-orchestrator'
 import { isRouterModelSelectable } from '@/lib/mcp-router-model-filter'
 import { encodeAudioSentinel, parseAudioDataUrl } from '@/lib/audio-sentinel'
 import { extractFilesFromPrompt, type FileMetadata } from '@/lib/fileMetadata'
+import { isPredefinedRemoteProvider, getProviderApiType } from '@/lib/providerCaps'
+import { paramsSettings } from '@/lib/predefinedParams'
 
 export type TokenUsageCallback = (
   usage: LanguageModelUsage,
@@ -78,6 +80,42 @@ const SCHEMA_PRIMITIVE_TYPES = new Set([
 
 const SCHEMA_NODE_MAP_KEYS = new Set(['properties', 'patternProperties', 'definitions', '$defs'])
 const SCHEMA_NODE_LIST_KEYS = new Set(['anyOf', 'oneOf', 'allOf', 'prefixItems'])
+
+// Per-model sidebar keys whose values should be forwarded into each chat-
+// completion request body as defaults. In router mode these can't be CLI args
+// — the router is one process serving every model — so they have to ride
+// along on each call. Assistant `parameters` override these in the merge.
+const MODEL_SAMPLING_SETTING_KEYS = [
+  'temperature',
+  'top_k',
+  'top_p',
+  'min_p',
+  'repeat_last_n',
+  'repeat_penalty',
+  'presence_penalty',
+  'frequency_penalty',
+] as const
+
+function extractModelSamplingDefaults(
+  model: Model | null | undefined
+): Record<string, unknown> {
+  if (!model?.settings) return {}
+  const out: Record<string, unknown> = {}
+  for (const key of MODEL_SAMPLING_SETTING_KEYS) {
+    const raw = model.settings[key]?.controller_props?.value
+    if (raw === undefined || raw === null || raw === '') continue
+    // Sidebar inputs are string-typed even when controller_props.type is
+    // 'number'; coerce so the request body matches the OpenAI schema.
+    if (typeof raw === 'string') {
+      const n = Number(raw)
+      if (!Number.isFinite(n)) continue
+      out[key] = n
+    } else {
+      out[key] = raw
+    }
+  }
+  return out
+}
 
 /**
  * Coerce a schema-node slot into a valid sub-schema. Some tool generators
@@ -151,8 +189,30 @@ function normalizeToolInputSchemaValue(value: unknown): unknown {
     normalized.type = 'string'
   }
 
+  // llama.cpp's json-schema-to-grammar emits PCRE `\d` for these formats,
+  // which GBNF rejects; the failed grammar silently disables tool-call JSON.
+  if (
+    typeof normalized.format === 'string' &&
+    LLAMACPP_BROKEN_STRING_FORMATS.has(normalized.format as string)
+  ) {
+    delete normalized.format
+  }
+
+  // `pattern` is the same PCRE-to-GBNF trap as `format`: any pattern that
+  // uses `\d`, `\w`, or `\s` (extremely common in date/time/uuid regexes)
+  // fails GBNF compilation. The model still has `type` and `description`.
+  if (
+    typeof normalized.pattern === 'string' &&
+    PCRE_SHORTHAND.test(normalized.pattern as string)
+  ) {
+    delete normalized.pattern
+  }
+
   return normalized
 }
+
+const LLAMACPP_BROKEN_STRING_FORMATS = new Set(['date', 'time', 'date-time'])
+const PCRE_SHORTHAND = /\\[dDwWsS]/
 
 /**
  * Returns true when an assistant message carries no content the model would
@@ -506,6 +566,24 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
     this.systemMessage = systemMessage
   }
 
+  // Inference params follow the thread's assigned assistant so in-chat agent
+  // switches take effect immediately. A thread with no real assistant
+  // (model-only / "None") uses no assistant params — matching the switcher.
+  // Only off-thread (no threadId / thread not yet in store) do we fall back to
+  // the global current assistant.
+  private getActiveInferenceParams(): Record<string, unknown> {
+    const thread = this.threadId
+      ? useThreads.getState().threads[this.threadId]
+      : undefined
+    if (thread) {
+      const threadAssistant = thread.assistants?.[0]
+      return threadAssistant && threadAssistant.id !== 'model-only'
+        ? (threadAssistant.parameters ?? {})
+        : {}
+    }
+    return useAssistant.getState().currentAssistant?.parameters ?? {}
+  }
+
   setOnTokenUsage(callback: TokenUsageCallback | undefined) {
     this.onTokenUsage = callback
   }
@@ -772,8 +850,7 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
         .getState()
         .getProviderByName(providerId)
 
-      const currentAssistant = useAssistant.getState().currentAssistant
-      const inferenceParams = currentAssistant?.parameters
+      const inferenceParams = this.getActiveInferenceParams()
 
       const selectedModel = useModelProvider.getState().selectedModel
       const reasoningParams = buildLlamacppReasoningParams(
@@ -799,12 +876,25 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
         }
       }
 
+      // Per-model sidebar sampling defaults flow through as request-body
+      // overrides (router mode can't bake them into CLI args). Assistant
+      // params still win — they're the explicit per-conversation override.
+      const modelSamplingDefaults = extractModelSamplingDefaults(selectedModel)
+
       // Create the model before refreshing tools so the MCP orchestrator can run
       // structured LLM routing when many servers are connected.
+      const mergedParams: Record<string, unknown> = {
+        ...modelSamplingDefaults,
+        ...(inferenceParams ?? {}),
+        ...reasoningParams,
+      }
+      if (isPredefinedRemoteProvider(effectiveProviderName)) {
+        for (const key of Object.keys(paramsSettings)) delete mergedParams[key]
+      }
       this.model = await ModelFactory.createModel(
         modelId,
         updatedProvider ?? provider,
-        { ...(inferenceParams ?? {}), ...reasoningParams }
+        mergedParams
       )
       useAppState.getState().updateLoadingModel(false)
       useAppState.getState().updateThreadLoadingModel(threadId, false)
@@ -824,8 +914,9 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
     // split it into separate messages so convertToModelMessages produces the
     // tool_use / tool_result pairing that the Claude API requires.
     // See: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#parallel-tool-use
+    const effectiveApiType = getProviderApiType(provider)
     let messagesToConvert = (() => {
-      if (effectiveProviderName !== 'anthropic') {
+      if (effectiveApiType !== 'anthropic') {
         return options.messages
       }
       return options.messages.flatMap((message) => {
@@ -868,7 +959,7 @@ export class CustomChatTransport implements ChatTransport<UIMessage> {
       })
     })()
 
-    const inferenceParams = useAssistant.getState().currentAssistant?.parameters ?? {}
+    const inferenceParams = this.getActiveInferenceParams()
 
     const selectedModel = useModelProvider.getState().selectedModel
 

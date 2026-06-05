@@ -361,6 +361,18 @@ export class DefaultModelsService implements ModelsService {
     }
   }
 
+  async pauseDownload(id: string): Promise<void> {
+    const llamacppEngine = this.getEngine('llamacpp')
+    const mlxEngine = this.getEngine('mlx')
+    // No stopped event here: the backend cancel surfaces via the import path,
+    // and the UI keeps the entry visible as paused for resume.
+    await Promise.allSettled(
+      [llamacppEngine?.pauseImport(id), mlxEngine?.pauseImport(id)].filter(
+        Boolean
+      )
+    )
+  }
+
   async deleteModel(id: string, provider?: string): Promise<void> {
     return this.getEngine(provider)?.delete(id)
   }
@@ -428,6 +440,27 @@ export class DefaultModelsService implements ModelsService {
         )
         throw error
       })
+  }
+
+  private reloadingModels = new Map<
+    string,
+    Promise<SessionInfo | undefined>
+  >()
+
+  // Force unload first: a crashed model still reports "loaded", so load() alone no-ops.
+  async reloadModel(
+    provider: ProviderObject,
+    model: string
+  ): Promise<SessionInfo | undefined> {
+    const key = `${provider.provider}:${model}`
+    const inflight = this.reloadingModels.get(key)
+    if (inflight) return inflight
+    const p = (async () => {
+      await this.stopModel(model, provider.provider).catch(() => {})
+      return this.startModel(provider, model)
+    })().finally(() => this.reloadingModels.delete(key))
+    this.reloadingModels.set(key, p)
+    return p
   }
 
   async isToolSupported(modelId: string): Promise<boolean> {
@@ -612,6 +645,21 @@ export class DefaultModelsService implements ModelsService {
     }
     if (engine && typeof engine.updateMtpSettings === 'function') {
       await engine.updateMtpSettings(modelId, patch)
+    }
+  }
+
+  async updateModelSettings(
+    modelId: string,
+    patch: Record<string, string | number | boolean | null | undefined>
+  ): Promise<void> {
+    const engine = this.getEngine('llamacpp') as AIEngine & {
+      updateModelSettings?: (
+        id: string,
+        patch: Record<string, string | number | boolean | null | undefined>
+      ) => Promise<void>
+    }
+    if (engine && typeof engine.updateModelSettings === 'function') {
+      await engine.updateModelSettings(modelId, patch)
     }
   }
 

@@ -50,9 +50,26 @@ function asString(v: any, defaultValue = ''): string {
 }
 
 export function normalizeLlamacppConfig(config: any): LlamacppConfig {
+  const llamacpp_version = asString(config.llamacpp_version)
+  const llamacpp_backend = asString(config.llamacpp_backend)
+  const composedVersionBackend =
+    llamacpp_version && llamacpp_backend
+      ? `${llamacpp_version}/${llamacpp_backend}`
+      : asString(config.version_backend)
   return {
-    version_backend: asString(config.version_backend),
+    llamacpp_version,
+    llamacpp_backend,
+    version_backend: composedVersionBackend,
     auto_update_engine: asBool(config.auto_update_engine),
+    check_for_updates:
+      config.check_for_updates === undefined ||
+      config.check_for_updates === null
+        ? true
+        : asBool(config.check_for_updates),
+    verify_backend_deps:
+      config.verify_backend_deps === undefined || config.verify_backend_deps === null
+        ? true
+        : asBool(config.verify_backend_deps),
     auto_unload: asBool(config.auto_unload),
     models_max:
       typeof config.models_max === 'number'
@@ -93,8 +110,6 @@ export function normalizeLlamacppConfig(config: any): LlamacppConfig {
 
     cache_type_k: asString(config.cache_type_k),
     cache_type_v: asString(config.cache_type_v),
-
-    defrag_thold: asNumber(config.defrag_thold, 0.0),
 
     rope_scaling: asString(config.rope_scaling),
     rope_scale: asNumber(config.rope_scale, 1.0),
@@ -244,6 +259,7 @@ export function normalizeFeatures(features: any): BackendFeatures {
     cuda12: features.cuda12 || false,
     cuda13: features.cuda13 || false,
     vulkan: features.vulkan || false,
+    hip: features.hip || false,
   }
 }
 

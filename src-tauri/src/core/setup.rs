@@ -5,9 +5,10 @@ use std::{
     io::Read,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 use tar::Archive;
-use tauri::{App, Emitter, Manager, Runtime, WindowEvent, Wry};
+use tauri::{App, AppHandle, Emitter, Listener, Manager, Runtime, WindowEvent, Wry};
 
 #[cfg(feature = "desktop")]
 use tauri::{
@@ -352,12 +353,28 @@ pub fn setup_jan_cli<R: Runtime>(app_handle: tauri::AppHandle<R>, version_change
     });
 }
 
+/// Resolve when the frontend emits `app-ready`, or after `timeout` (so a window
+/// that never signals still proceeds).
+async fn wait_for_app_ready<R: Runtime>(app: &AppHandle<R>, timeout: Duration) {
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let handler = app.once_any("app-ready", move |_| {
+        let _ = tx.send(());
+    });
+    if tokio::time::timeout(timeout, rx).await.is_err() {
+        log::info!("app-ready not received within {timeout:?}; starting MCP servers anyway");
+        app.unlisten(handler);
+    }
+}
+
 pub fn setup_mcp<R: Runtime>(app: &App<R>) {
     let state = app.state::<AppState>();
     let servers = state.mcp_servers.clone();
     let app_handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         use crate::core::mcp::lockfile::cleanup_all_stale_locks;
+
+        // Defer past first paint so npx/uvx spawns don't starve cold start.
+        wait_for_app_ready(&app_handle, Duration::from_secs(30)).await;
 
         // Create default mcp_config.json if it doesn't exist
         let config_path = get_jan_data_folder_path(app_handle.clone()).join("mcp_config.json");
@@ -375,9 +392,9 @@ pub fn setup_mcp<R: Runtime>(app: &App<R>) {
         if let Err(e) = run_mcp_commands(&app_handle, servers).await {
             log::error!("Failed to run mcp commands: {e}");
         }
-        app_handle
-            .emit("mcp-update", "MCP servers updated")
-            .unwrap();
+        if let Err(e) = app_handle.emit("mcp-update", "MCP servers updated") {
+            log::warn!("Failed to emit mcp-update event: {e}");
+        }
     });
 }
 
@@ -425,6 +442,54 @@ pub fn setup_tray(app: &App) -> tauri::Result<TrayIcon> {
         .build(app)
 }
 
+/// Shrink tao's Wayland CSD titlebar (~46px → ~24px) and clear its hardcoded
+/// `decoration_layout` so buttons follow GNOME. Do NOT `set_titlebar` here —
+/// that replaces tao's drag-enabled HeaderBar and breaks drag/double-click.
+#[cfg(target_os = "linux")]
+pub fn shrink_gtk_headerbar<R: Runtime>(app: &App<R>) {
+    use gtk::prelude::*;
+
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let is_csd_desktop = desktop
+        .split(':')
+        .any(|d| matches!(d, "GNOME" | "GNOME-Classic" | "Unity" | "Pantheon"));
+    if !is_csd_desktop {
+        log::info!(
+            "shrink_gtk_headerbar: skipping on XDG_CURRENT_DESKTOP={desktop:?} (not CSD-only)"
+        );
+        return;
+    }
+
+    let css = gtk::CssProvider::new();
+    let style = b"headerbar { min-height: 24px; padding: 0 4px; } \
+                  headerbar button { min-height: 20px; min-width: 20px; padding: 0 4px; } \
+                  headerbar .title { font-size: 0.9em; }";
+    if let Err(e) = css.load_from_data(style) {
+        log::warn!("shrink_gtk_headerbar: css load failed: {e}");
+    } else if let Some(screen) = gtk::gdk::Screen::default() {
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+
+    // `None` layout falls back to gtk-decoration-layout, synced from GNOME.
+    let header = app
+        .get_webview_window("main")
+        .and_then(|w| w.gtk_window().ok())
+        .and_then(|gw| gw.titlebar())
+        .and_then(|tb| tb.downcast::<gtk::EventBox>().ok())
+        .and_then(|eb| eb.child())
+        .and_then(|c| c.downcast::<gtk::HeaderBar>().ok());
+    match header {
+        Some(h) => h.set_decoration_layout(None::<&str>),
+        None => {
+            log::warn!("shrink_gtk_headerbar: titlebar not the expected EventBox>HeaderBar shape")
+        }
+    }
+}
+
 pub fn setup_theme_listener<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     // Setup GTK window theme listener for main window
     if let Some(window) = app.get_webview_window("main") {
@@ -447,6 +512,83 @@ pub fn setup_theme_listener<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     }
 
     Ok(())
+}
+
+/// Read the current XDG Desktop Portal `org.freedesktop.appearance/color-scheme`
+/// setting. Returns "dark", "light", or `None` if the portal reports no preference
+/// or is unavailable.
+#[cfg(target_os = "linux")]
+async fn read_xdg_portal_color_scheme() -> Result<Option<&'static str>, Box<dyn std::error::Error>>
+{
+    use zbus::Connection;
+
+    let connection = Connection::session().await?;
+    let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&connection)
+        .destination("org.freedesktop.portal.Desktop")?
+        .path("/org/freedesktop/portal/desktop")?
+        .interface("org.freedesktop.portal.Settings")?
+        .build()
+        .await?;
+
+    let reply: zbus::zvariant::OwnedValue = proxy
+        .call("Read", &("org.freedesktop.appearance", "color-scheme"))
+        .await?;
+
+    let inner: zbus::zvariant::OwnedValue = match reply.downcast_ref::<zbus::zvariant::Value>() {
+        Ok(v) => v.try_to_owned()?,
+        Err(_) => reply,
+    };
+    let color_scheme = u32::try_from(inner).unwrap_or(0);
+    // GNOME emits 0 ("no preference") for light, 1 for dark, 2 for explicit
+    // light (rare). Treat 0 and 2 as light so light↔dark toggles work on both
+    // GNOME and KDE/freedesktop-compliant DEs.
+    Ok(match color_scheme {
+        1 => Some("dark"),
+        _ => Some("light"),
+    })
+}
+
+/// Flip GTK's `gtk-application-prefer-dark-theme` so the native Wayland
+/// HeaderBar follows the app's effective theme (user override or system).
+/// No-op on non-Linux.
+#[tauri::command]
+pub fn set_gtk_prefer_dark(dark: bool) {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+        // GTK objects are not Send; bounce onto the GTK main thread.
+        gtk::glib::MainContext::default().invoke(move || {
+            if let Some(settings) = gtk::Settings::default() {
+                settings.set_gtk_application_prefer_dark_theme(dark);
+            }
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = dark;
+    }
+}
+
+#[tauri::command]
+pub async fn get_system_theme<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        match read_xdg_portal_color_scheme().await {
+            Ok(Some(theme)) => return Ok(theme.to_string()),
+            Ok(None) => {}
+            Err(e) => log::warn!("get_system_theme: portal read failed: {e}"),
+        }
+    }
+
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(theme) = window.theme() {
+            return Ok(match theme {
+                tauri::Theme::Dark => "dark".to_string(),
+                _ => "light".to_string(),
+            });
+        }
+    }
+    Ok("light".to_string())
 }
 
 /// Listen to the XDG Desktop Portal `org.freedesktop.appearance` `color-scheme`
@@ -474,6 +616,17 @@ async fn setup_xdg_portal_theme_listener<R: Runtime>(
 
     log::info!("XDG Desktop Portal theme listener active");
 
+    // Emit the current value so the frontend doesn't have to wait for the first
+    // SettingChanged signal to learn the system color-scheme on startup.
+    match read_xdg_portal_color_scheme().await {
+        Ok(Some(theme_str)) => {
+            log::info!("XDG Portal: initial system color-scheme: {theme_str}");
+            let _ = app_handle.emit("theme-changed", theme_str);
+        }
+        Ok(None) => log::info!("XDG Portal: initial color-scheme is 'no preference'"),
+        Err(e) => log::warn!("XDG Portal: initial Read failed: {e}"),
+    }
+
     while let Some(signal) = signal_stream.next().await {
         let body = signal.body();
         if let Ok((namespace, key, value)) =
@@ -484,8 +637,7 @@ async fn setup_xdg_portal_theme_listener<R: Runtime>(
                 let color_scheme = u32::try_from(value).unwrap_or(0);
                 let theme_str = match color_scheme {
                     1 => "dark",
-                    2 => "light",
-                    _ => "light", // default to light for "no preference"
+                    _ => "light",
                 };
                 log::info!(
                     "XDG Portal: system color-scheme changed to: {theme_str} (raw value: {color_scheme})"

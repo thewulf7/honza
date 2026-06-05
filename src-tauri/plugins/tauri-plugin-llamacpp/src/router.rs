@@ -41,6 +41,15 @@ fn is_backend_error_line(line_lower: &str) -> bool {
     if line_lower.contains("ggml_metal") && line_lower.contains("error") {
         return true;
     }
+    // GPU device loss (vk::DeviceLostError / ErrorDeviceLost, CUDA device-lost)
+    // and any uncaught C++ exception abort the child mid-request — surface them
+    // so a crash during prompt processing still reaches the UI.
+    if line_lower.contains("devicelost") || line_lower.contains("device lost") {
+        return true;
+    }
+    if line_lower.contains("terminate called after throwing") {
+        return true;
+    }
     false
 }
 
@@ -77,8 +86,10 @@ pub fn router_args(
         port.to_string(),
         "--api-key".to_string(),
         api_key.to_string(),
-        "--no-webui".to_string(),
     ];
+    // Web-UI disable flag (`--no-webui` pre-b9222, `--no-ui` from b9222) is
+    // appended by the TS caller via `default_args` because the spelling
+    // depends on the backend build number.
     args.extend(default_args.iter().cloned());
     args
 }
@@ -87,6 +98,7 @@ pub fn router_args(
 ///
 /// On readiness-detection failure or spawn failure, the child is killed before
 /// returning the error.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_router(
     backend_exe: PathBuf,
     preset_path: PathBuf,
@@ -251,7 +263,10 @@ pub async fn start_router(
 
     // Early-exit check.
     if let Some(status) = child.try_wait()? {
-        let stderr_output = stderr_task.await.unwrap_or_default();
+        let stderr_output = stderr_task.await.unwrap_or_else(|e| {
+                        log::warn!("Router stderr task join failed: {e}");
+                        String::new()
+                    });
         log::error!("llama-server router exited early with status {:?}", status);
         return Err(LlamacppError::from_stderr(&stderr_output).into());
     }
@@ -268,14 +283,20 @@ pub async fn start_router(
             }
             _ = tokio::time::sleep(Duration::from_millis(50)) => {
                 if let Some(status) = child.try_wait()? {
-                    let stderr_output = stderr_task.await.unwrap_or_default();
+                    let stderr_output = stderr_task.await.unwrap_or_else(|e| {
+                        log::warn!("Router stderr task join failed: {e}");
+                        String::new()
+                    });
                     log::error!("llama-server router exited before readiness: {:?}", status);
                     return Err(LlamacppError::from_stderr(&stderr_output).into());
                 }
                 if start_time.elapsed() > timeout_duration {
                     log::error!("Timeout waiting for router to be ready");
                     let _ = child.kill().await;
-                    let stderr_output = stderr_task.await.unwrap_or_default();
+                    let stderr_output = stderr_task.await.unwrap_or_else(|e| {
+                        log::warn!("Router stderr task join failed: {e}");
+                        String::new()
+                    });
                     return Err(LlamacppError::new(
                         ErrorCode::ModelLoadTimedOut,
                         "Router took too long to start and timed out.".into(),
@@ -588,7 +609,11 @@ mod tests {
         assert!(joined.contains("--host 127.0.0.1"));
         assert!(joined.contains("--port 1337"));
         assert!(joined.contains("--api-key secret-key"));
-        assert!(args.iter().any(|a| a == "--no-webui"));
+        // Web-UI disable flag is now appended by the caller (it's
+        // build-number-dependent: --no-webui vs --no-ui), so it must NOT be
+        // baked into the base argv.
+        assert!(!args.iter().any(|a| a == "--no-webui"));
+        assert!(!args.iter().any(|a| a == "--no-ui"));
     }
 
     #[test]
@@ -609,5 +634,23 @@ mod tests {
         let args = router_args(&preset, 8080, "k", 0, &[]);
         let joined = args.join(" ");
         assert!(joined.contains("--models-max 0"));
+    }
+
+    #[test]
+    fn classifies_backend_crash_lines() {
+        // Inputs arrive already lowercased from the caller.
+        assert!(is_backend_error_line(
+            "what():  vk::device::waitforfences: errordevicelost"
+        ));
+        assert!(is_backend_error_line(
+            "terminate called after throwing an instance of 'vk::devicelosterror'"
+        ));
+        assert!(is_backend_error_line("cuda error: out of memory"));
+        assert!(is_backend_error_line("ggml_assert(cond) failed"));
+        assert!(!is_backend_error_line(
+            "srv log_server_r: request: post /v1/chat/completions"
+        ));
+        // OOM is classified on its own path.
+        assert!(is_oom_line("erroroutofdevicememory"));
     }
 }

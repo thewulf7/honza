@@ -20,6 +20,44 @@ use crate::core::{
     state::{ProviderConfig, ServerHandle, SharedMcpServers},
 };
 
+const SCHEMA_PRIMITIVE_TYPES: &[&str] = &[
+    "string", "number", "integer", "boolean", "null", "array", "object",
+];
+
+// llama.cpp's json-schema-to-grammar emits PCRE `\d` for these formats,
+// which GBNF rejects; the failed grammar silently disables tool-call JSON.
+const LLAMACPP_BROKEN_STRING_FORMATS: &[&str] = &["date", "time", "date-time"];
+
+fn pattern_has_pcre_shorthand(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'\\' && matches!(bytes[i + 1], b'd' | b'D' | b'w' | b'W' | b's' | b'S') {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// If `value` is a bare string naming a JSON-schema primitive type (e.g.
+/// `"string"`), expand it to `{ "type": <that> }`. Some tool generators emit
+/// shorthand like `{ "properties": { "foo": "string" } }`; llama.cpp's
+/// json-schema-to-grammar rejects that with `Unrecognized schema: "string"`.
+fn coerce_schema_node(value: &mut serde_json::Value) {
+    if let serde_json::Value::String(s) = value {
+        if SCHEMA_PRIMITIVE_TYPES.contains(&s.as_str()) {
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "type".to_string(),
+                serde_json::Value::String(std::mem::take(s)),
+            );
+            *value = serde_json::Value::Object(obj);
+        }
+    }
+    normalize_openai_tool_parameters_schema(value);
+}
+
 /// Some OpenAI tool schema generators (and some MCP servers) may emit schemas where
 /// a property schema only contains `description` but omits `type`, or where a
 /// schema-node slot holds a bare type-name string instead of a sub-schema object.
@@ -78,6 +116,27 @@ fn normalize_openai_tool_parameters_schema_at(
                 );
             }
 
+            let drop_format = map
+                .get("format")
+                .and_then(|v| v.as_str())
+                .map(|f| LLAMACPP_BROKEN_STRING_FORMATS.contains(&f))
+                .unwrap_or(false);
+            if drop_format {
+                map.remove("format");
+            }
+
+            let drop_pattern = map
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .map(pattern_has_pcre_shorthand)
+                .unwrap_or(false);
+            if drop_pattern {
+                map.remove("pattern");
+            }
+
+            // Recurse, with shorthand expansion for keys whose direct children
+            // are schema nodes.
+            for (key, v) in map.iter_mut() {
             for (key, value) in map.iter_mut() {
                 match key.as_str() {
                     "properties" | "patternProperties" | "$defs" | "definitions" | "dependentSchemas" => {
@@ -677,10 +736,7 @@ pub(crate) fn convert_messages(
             continue;
         }
 
-        let content_array = match content.as_array() {
-            Some(arr) => arr,
-            None => return None,
-        };
+        let content_array = content.as_array()?;
 
         match role {
             "assistant" => {
@@ -967,7 +1023,7 @@ pub fn get_destination_path(original_path: &str, prefix: &str) -> String {
     remove_prefix(original_path, prefix)
 }
 
-use tauri_plugin_mlx::state::MlxBackendSession;
+use crate::core::server::MlxBackendSession;
 
 use rmcp::model::{CallToolRequestParam, CallToolResult};
 
@@ -1700,6 +1756,8 @@ async fn call_openai_chat_completions(
     Err(last_err)
 }
 
+// orchestration coordinator threads state from multiple subsystems
+#[allow(clippy::too_many_arguments)]
 async fn run_server_side_openai_orchestration(
     json_body: &serde_json::Value,
     client: &Client,
@@ -1872,6 +1930,7 @@ async fn run_server_side_openai_orchestration(
 }
 
 /// Handles the proxy request logic
+#[allow(clippy::too_many_arguments)]
 async fn proxy_request(
     req: Request<Body>,
     client: Client,
@@ -3590,6 +3649,7 @@ pub async fn start_server(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn start_server_internal(
     server_handle: Arc<Mutex<Option<ServerHandle>>>,
     llama_state: Arc<LlamacppState>,

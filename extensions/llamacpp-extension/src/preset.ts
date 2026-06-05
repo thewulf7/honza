@@ -18,8 +18,6 @@ type ModelYaml = ModelConfig & {
   chat_template?: string
   ctx_size?: number
   n_gpu_layers?: number
-  cpu_moe?: boolean
-  n_cpu_moe?: number
   flash_attn?: string
   cache_type_k?: string
   cache_type_v?: string
@@ -33,12 +31,21 @@ type ModelYaml = ModelConfig & {
   spec_draft_n_max?: number
   spec_draft_n_min?: number
   spec_draft_p_min?: number
+  cpu_moe?: boolean
+  n_cpu_moe?: number
+  no_kv_offload?: boolean
+  override_tensor?: string
+  mmproj_offload?: boolean
   spec_draft_p_split?: number
 }
 
 export const MTP_MIN_BUILD = 9193
 
 const DEFAULT_EMBEDDING_UBATCH = 2048
+
+// Fallback context size when the user hasn't set one, to avoid loading a
+// model's full trained context (which can OOM on large-context models).
+const DEFAULT_CTX_SIZE = 8192
 
 function escapeIniValue(v: string): string {
   // INI values for llama-server are read as strings; trim surrounding whitespace
@@ -103,28 +110,49 @@ export async function generatePreset(
 
   const lines: string[] = []
 
+  // Emit only values that differ from llama.cpp's compiled defaults so the
+  // preset stays minimal and intent-revealing. Defaults sourced from
+  // tools/server/README.md.
   lines.push('[*]')
-  if (typeof config.fit === 'boolean') {
-    lines.push(`fit = ${config.fit ? 'on' : 'off'}`)
+  // fit default = 'on'
+  if (config.fit === false) {
+    lines.push('fit = off')
   }
-  if (typeof config.fit_target === 'string' && config.fit_target.length > 0) {
+  // fit-target default = '1024' (MiB per device)
+  if (
+    typeof config.fit_target === 'string' &&
+    config.fit_target.length > 0 &&
+    config.fit_target !== '1024'
+  ) {
     lines.push(`fit-target = ${escapeIniValue(config.fit_target)}`)
   }
+  // fit-ctx default = 4096
   const fitCtxNum =
     typeof config.fit_ctx === 'number'
       ? config.fit_ctx
       : typeof config.fit_ctx === 'string' && config.fit_ctx.length > 0
         ? Number(config.fit_ctx)
         : NaN
-  if (Number.isFinite(fitCtxNum) && fitCtxNum > 0) {
+  if (Number.isFinite(fitCtxNum) && fitCtxNum > 0 && fitCtxNum !== 4096) {
     lines.push(`fit-ctx = ${fitCtxNum}`)
   }
-  if (typeof config.ctx_size === 'number' && config.ctx_size > 0) {
-    lines.push(`ctx-size = ${config.ctx_size}`)
+  // ctx-size: llama.cpp's own default loads the model's full trained context,
+  // which can OOM on large-context models. Default to 8192 when the user hasn't
+  // set a positive value. Skip entirely when auto-fit is enabled — fit owns
+  // context sizing and an explicit ctx-size would override it.
+  const fitEnabled = config.fit !== false
+  if (!fitEnabled) {
+    const ctxSize =
+      typeof config.ctx_size === 'number' && config.ctx_size > 0
+        ? config.ctx_size
+        : DEFAULT_CTX_SIZE
+    lines.push(`ctx-size = ${ctxSize}`)
   }
+  // n-gpu-layers default = 0 / auto; emit any non-negative explicit value.
   if (typeof config.n_gpu_layers === 'number' && config.n_gpu_layers >= 0) {
     lines.push(`n-gpu-layers = ${config.n_gpu_layers}`)
   }
+  // flash-attn default = 'auto'; explicit on/off only.
   if (typeof config.cpu_moe === 'boolean') {
     lines.push(`cpu-moe = ${config.cpu_moe}`)
   }
@@ -137,17 +165,153 @@ export async function generatePreset(
   ) {
     lines.push(`flash-attn = ${config.flash_attn}`)
   }
-  if (typeof config.cache_type_k === 'string' && config.cache_type_k.length > 0) {
+  // cache-type-k/v default = 'f16'
+  if (
+    typeof config.cache_type_k === 'string' &&
+    config.cache_type_k.length > 0 &&
+    config.cache_type_k !== 'f16'
+  ) {
     lines.push(`cache-type-k = ${escapeIniValue(config.cache_type_k)}`)
   }
-  if (typeof config.cache_type_v === 'string' && config.cache_type_v.length > 0) {
+  if (
+    typeof config.cache_type_v === 'string' &&
+    config.cache_type_v.length > 0 &&
+    config.cache_type_v !== 'f16'
+  ) {
     lines.push(`cache-type-v = ${escapeIniValue(config.cache_type_v)}`)
   }
+  // parallel default = -1 (auto); positive user value is intent.
   if (typeof config.parallel === 'number' && config.parallel > 0) {
     lines.push(`parallel = ${config.parallel}`)
   }
-  if (typeof config.cont_batching === 'boolean') {
-    lines.push(`cont-batching = ${config.cont_batching}`)
+  // cont-batching default = true; emit only the explicit-off case.
+  if (config.cont_batching === false) {
+    lines.push('cont-batching = false')
+  }
+  // threads default = -1 (logical cores)
+  if (
+    typeof config.threads === 'number' &&
+    Number.isFinite(config.threads) &&
+    config.threads > 0
+  ) {
+    lines.push(`threads = ${Math.floor(config.threads)}`)
+  }
+  // threads-batch default = same as threads; emit only if positive and distinct.
+  if (
+    typeof config.threads_batch === 'number' &&
+    Number.isFinite(config.threads_batch) &&
+    config.threads_batch > 0 &&
+    config.threads_batch !== config.threads
+  ) {
+    lines.push(`threads-batch = ${Math.floor(config.threads_batch)}`)
+  }
+  // n-predict default = -1 (infinity)
+  if (
+    typeof config.n_predict === 'number' &&
+    Number.isFinite(config.n_predict) &&
+    config.n_predict !== -1
+  ) {
+    lines.push(`n-predict = ${Math.floor(config.n_predict)}`)
+  }
+  // ubatch-size default = 512
+  if (
+    typeof config.ubatch_size === 'number' &&
+    Number.isFinite(config.ubatch_size) &&
+    config.ubatch_size > 0 &&
+    config.ubatch_size !== 512
+  ) {
+    lines.push(`ubatch-size = ${Math.floor(config.ubatch_size)}`)
+  }
+  // device default = empty (auto-pick)
+  if (typeof config.device === 'string' && config.device.trim().length > 0) {
+    lines.push(`device = ${escapeIniValue(config.device)}`)
+  }
+  // split-mode default = 'layer'
+  if (
+    typeof config.split_mode === 'string' &&
+    config.split_mode.length > 0 &&
+    config.split_mode !== 'layer'
+  ) {
+    lines.push(`split-mode = ${escapeIniValue(config.split_mode)}`)
+  }
+  // main-gpu default = 0
+  if (
+    typeof config.main_gpu === 'number' &&
+    Number.isFinite(config.main_gpu) &&
+    config.main_gpu > 0
+  ) {
+    lines.push(`main-gpu = ${Math.floor(config.main_gpu)}`)
+  }
+  // no-mmap / mlock default = false
+  if (config.no_mmap === true) {
+    lines.push('no-mmap = true')
+  }
+  if (config.mlock === true) {
+    lines.push('mlock = true')
+  }
+  // rope-scaling default = 'none'
+  if (
+    typeof config.rope_scaling === 'string' &&
+    config.rope_scaling.length > 0 &&
+    config.rope_scaling !== 'none'
+  ) {
+    lines.push(`rope-scaling = ${escapeIniValue(config.rope_scaling)}`)
+  }
+  // rope-scale / rope-freq-scale default = 1.0 (identity / no scaling);
+  // rope-freq-base default = 0 (loaded from model).
+  if (
+    typeof config.rope_scale === 'number' &&
+    Number.isFinite(config.rope_scale) &&
+    config.rope_scale > 0 &&
+    config.rope_scale !== 1
+  ) {
+    lines.push(`rope-scale = ${config.rope_scale}`)
+  }
+  if (
+    typeof config.rope_freq_base === 'number' &&
+    Number.isFinite(config.rope_freq_base) &&
+    config.rope_freq_base > 0
+  ) {
+    lines.push(`rope-freq-base = ${config.rope_freq_base}`)
+  }
+  if (
+    typeof config.rope_freq_scale === 'number' &&
+    Number.isFinite(config.rope_freq_scale) &&
+    config.rope_freq_scale > 0 &&
+    config.rope_freq_scale !== 1
+  ) {
+    lines.push(`rope-freq-scale = ${config.rope_freq_scale}`)
+  }
+  // context-shift default = enabled
+  if (config.ctx_shift === false) {
+    lines.push('context-shift = false')
+  }
+  // cache-ram default = 8192 MiB
+  if (
+    typeof config.cache_ram === 'number' &&
+    Number.isFinite(config.cache_ram) &&
+    config.cache_ram !== 8192
+  ) {
+    lines.push(`cache-ram = ${Math.floor(config.cache_ram)}`)
+  }
+  // cache-reuse default = 0 (disabled)
+  if (
+    typeof config.cache_reuse === 'number' &&
+    Number.isFinite(config.cache_reuse) &&
+    config.cache_reuse > 0
+  ) {
+    lines.push(`cache-reuse = ${Math.floor(config.cache_reuse)}`)
+  }
+  if (config.swa_full === true) {
+    lines.push('swa-full = true')
+  }
+  // keep default = 0
+  if (
+    typeof config.keep === 'number' &&
+    Number.isFinite(config.keep) &&
+    config.keep !== 0
+  ) {
+    lines.push(`keep = ${Math.floor(config.keep)}`)
   }
   if (typeof config.spec_type === 'string' && config.spec_type.length > 0 && config.spec_type !== 'none') {
     lines.push(`spec-type = ${escapeIniValue(config.spec_type)}`)
@@ -187,7 +351,13 @@ export async function generatePreset(
       lines.push(`chat-template = ${escapeIniValue(mc.chat_template)}`)
     }
 
-    if (typeof mc.ctx_size === 'number' && mc.ctx_size > 0) {
+    // Per-model overrides — same default-skipping rules as the [*] block.
+    // ctx-size is skipped when auto-fit is on so fit can size the context.
+    if (
+      !fitEnabled &&
+      typeof mc.ctx_size === 'number' &&
+      mc.ctx_size > 0
+    ) {
       lines.push(`ctx-size = ${mc.ctx_size}`)
     }
     if (typeof mc.n_gpu_layers === 'number' && mc.n_gpu_layers >= 0) {
@@ -205,17 +375,57 @@ export async function generatePreset(
     ) {
       lines.push(`flash-attn = ${mc.flash_attn}`)
     }
-    if (typeof mc.cache_type_k === 'string' && mc.cache_type_k.length > 0) {
+    if (
+      typeof mc.cache_type_k === 'string' &&
+      mc.cache_type_k.length > 0 &&
+      mc.cache_type_k !== 'f16'
+    ) {
       lines.push(`cache-type-k = ${escapeIniValue(mc.cache_type_k)}`)
     }
-    if (typeof mc.cache_type_v === 'string' && mc.cache_type_v.length > 0) {
+    if (
+      typeof mc.cache_type_v === 'string' &&
+      mc.cache_type_v.length > 0 &&
+      mc.cache_type_v !== 'f16'
+    ) {
       lines.push(`cache-type-v = ${escapeIniValue(mc.cache_type_v)}`)
     }
     if (typeof mc.parallel === 'number' && mc.parallel > 0) {
       lines.push(`parallel = ${mc.parallel}`)
     }
-    if (typeof mc.cont_batching === 'boolean') {
-      lines.push(`cont-batching = ${mc.cont_batching}`)
+    if (mc.cont_batching === false) {
+      lines.push('cont-batching = false')
+    }
+    if (
+      typeof mc.batch_size === 'number' &&
+      mc.batch_size > 0 &&
+      mc.batch_size !== 2048
+    ) {
+      lines.push(`batch-size = ${Math.floor(mc.batch_size)}`)
+    }
+    if (
+      typeof mc.ubatch_size === 'number' &&
+      mc.ubatch_size > 0 &&
+      mc.ubatch_size !== 512
+    ) {
+      lines.push(`ubatch-size = ${Math.floor(mc.ubatch_size)}`)
+    }
+    if (mc.cpu_moe === true) {
+      lines.push('cpu-moe = true')
+    }
+    if (typeof mc.n_cpu_moe === 'number' && mc.n_cpu_moe > 0) {
+      lines.push(`n-cpu-moe = ${Math.floor(mc.n_cpu_moe)}`)
+    }
+    if (mc.no_kv_offload === true) {
+      // INI key is the negated form; parse_bool_arg flips it server-side.
+      // Writing `no-kv-offload = true` => kv-offload disabled.
+      lines.push('no-kv-offload = true')
+    }
+    if (typeof mc.override_tensor === 'string' && mc.override_tensor.trim().length > 0) {
+      lines.push(`override-tensor = ${escapeIniValue(mc.override_tensor)}`)
+    }
+    // mmproj-offload defaults to on; only emit when explicitly disabled.
+    if (mc.mmproj_offload === false) {
+      lines.push('mmproj-offload = false')
     }
 
     // If the global spec-type is draft-mtp but this model has MTP explicitly

@@ -33,6 +33,7 @@ export const localStorageKey = {
   sidebarMode: 'sidebar-mode',
   latestJanModel: 'latest-jan-model',
   defaultEmbeddingModel: 'default-embedding-model',
+  pausedDownloads: 'paused-downloads',
 }
 
 export const CACHE_EXPIRY_MS = 1000 * 60 * 60 * 24

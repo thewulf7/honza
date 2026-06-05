@@ -185,10 +185,8 @@ export interface SessionInfo {
   pid: number // opaque handle for unload/chat
   port: number // llama-server output port (corrected from portid)
   model_id: string //name of the model
-  model_path: string // path of the loaded model
   is_embedding: boolean
   api_key: string
-  mmproj_path?: string
 }
 
 export interface UnloadResult {
@@ -303,6 +301,10 @@ export abstract class AIEngine extends BaseExtension {
    * Aborts an ongoing model import
    */
   abstract abortImport(modelId: string): Promise<void>
+
+  // Stops an import but keeps the partial download so it can be resumed.
+  // Default no-op for engines without resumable downloads.
+  async pauseImport(_modelId: string): Promise<void> {}
 
   /**
    * Get currently loaded models

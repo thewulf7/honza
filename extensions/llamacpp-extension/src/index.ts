@@ -22,12 +22,20 @@ import {
   AppEvent,
   DownloadEvent,
   chatCompletionRequestMessage,
+  SettingComponentProps,
+  DropdownComponentProps,
 } from '@janhq/core'
+import {
+  readSettingsFile,
+  writeSettingsFile,
+  settingsFileExists,
+} from './settings-store'
 
 import { error, info, warn } from '@tauri-apps/plugin-log'
 import { listen } from '@tauri-apps/api/event'
 import {
   listSupportedBackends,
+  fetchRemoteBackends,
   downloadBackend,
   isBackendInstalled,
   verifyBackendInstallation,
@@ -75,22 +83,72 @@ import { getSystemUsage, getSystemInfo } from '@janhq/tauri-plugin-hardware-api'
 const EMBEDDING_CHECK_VERSION = 3
 const MTP_CHECK_VERSION = 1
 
+// Provider settings that end up in `router.preset.ini` (`[*]` global section
+// in preset.ts). Mutating any of these requires a router restart so the new
+// preset is read; cosmetic / process-only keys (auto_update_engine, models_max,
+// timeout, llamacpp_env, version_backend) are handled separately or not at all.
+const PRESET_AFFECTING_KEYS = new Set<string>([
+  'fit',
+  'fit_target',
+  'fit_ctx',
+  'ctx_size',
+  'n_gpu_layers',
+  'flash_attn',
+  'cache_type_k',
+  'cache_type_v',
+  'parallel',
+  'cont_batching',
+  'threads',
+  'threads_batch',
+  'n_predict',
+  'ubatch_size',
+  'device',
+  'split_mode',
+  'main_gpu',
+  'no_mmap',
+  'mlock',
+  'rope_scaling',
+  'rope_scale',
+  'rope_freq_base',
+  'rope_freq_scale',
+  'ctx_shift',
+  'cache_ram',
+  'cache_reuse',
+  'swa_full',
+  'keep',
+])
+
 /**
  * Override the default app.log function to use Jan's logging system.
  * @param args
  */
+function formatLogArg(arg: unknown): string {
+  if (arg instanceof Error) {
+    return arg.stack ? `${arg.message}\n${arg.stack}` : arg.message
+  }
+  if (arg === null || arg === undefined) return String(arg)
+  if (typeof arg === 'object') {
+    try {
+      return JSON.stringify(arg)
+    } catch {
+      return String(arg)
+    }
+  }
+  return String(arg)
+}
+
 const logger = {
   info: function (...args: any[]) {
     console.log(...args)
-    info(args.map((arg) => ` ${arg}`).join(` `))
+    info(args.map((arg) => ` ${formatLogArg(arg)}`).join(` `))
   },
   warn: function (...args: any[]) {
     console.warn(...args)
-    warn(args.map((arg) => ` ${arg}`).join(` `))
+    warn(args.map((arg) => ` ${formatLogArg(arg)}`).join(` `))
   },
   error: function (...args: any[]) {
     console.error(...args)
-    error(args.map((arg) => ` ${arg}`).join(` `))
+    error(args.map((arg) => ` ${formatLogArg(arg)}`).join(` `))
   },
 }
 
@@ -107,6 +165,111 @@ const logger = {
 function parseBuildNumber(version: string): number | null {
   const match = version.match(/^b(\d+)$/)
   return match ? parseInt(match[1], 10) : null
+}
+
+type YamlSettingValue = string | number | boolean | null
+
+type PersistedProviderSetting = {
+  controller_props?: {
+    value?: unknown
+  }
+}
+
+type PersistedModelState = {
+  id?: unknown
+  settings?: Record<string, PersistedProviderSetting>
+}
+
+const MODEL_PROVIDER_LOCAL_STORAGE_KEY = 'model-provider'
+const LLAMACPP_MODEL_SETTINGS_BACKFILL_KEY =
+  'llamacpp_model_yaml_backfill_v1'
+
+const MODEL_SETTINGS_YAML_MAPPING: Record<
+  string,
+  {
+    yamlKey: string
+    coerce: (v: unknown) => YamlSettingValue
+  }
+> = {
+  ctx_len: {
+    yamlKey: 'ctx_size',
+    coerce: (v) => {
+      if (v === '' || v == null) return null
+      const n = typeof v === 'number' ? v : Number(v)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    },
+  },
+  ngl: {
+    yamlKey: 'n_gpu_layers',
+    coerce: (v) => {
+      if (v === '' || v == null) return null
+      const n = typeof v === 'number' ? v : Number(v)
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
+    },
+  },
+  chat_template: {
+    yamlKey: 'chat_template',
+    coerce: (v) =>
+      typeof v === 'string' && v.trim().length > 0 ? v : null,
+  },
+  batch_size: {
+    yamlKey: 'batch_size',
+    coerce: (v) => {
+      if (v === '' || v == null) return null
+      const n = typeof v === 'number' ? v : Number(v)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    },
+  },
+  ubatch_size: {
+    yamlKey: 'ubatch_size',
+    coerce: (v) => {
+      if (v === '' || v == null) return null
+      const n = typeof v === 'number' ? v : Number(v)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    },
+  },
+  cpu_moe: {
+    yamlKey: 'cpu_moe',
+    coerce: (v) => (v === true ? true : null),
+  },
+  n_cpu_moe: {
+    yamlKey: 'n_cpu_moe',
+    coerce: (v) => {
+      if (v === '' || v == null) return null
+      const n = typeof v === 'number' ? v : Number(v)
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+    },
+  },
+  no_kv_offload: {
+    yamlKey: 'no_kv_offload',
+    coerce: (v) => (v === true ? true : null),
+  },
+  override_tensor_buffer_t: {
+    yamlKey: 'override_tensor',
+    coerce: (v) =>
+      typeof v === 'string' && v.trim().length > 0 ? v.trim() : null,
+  },
+  offload_mmproj: {
+    yamlKey: 'mmproj_offload',
+    coerce: (v) => (v === false ? false : null),
+  },
+}
+
+function readPersistedLlamacppModels(): PersistedModelState[] {
+  try {
+    const raw = localStorage.getItem(MODEL_PROVIDER_LOCAL_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    const providers = parsed?.state?.providers
+    if (!Array.isArray(providers)) return []
+    const llamacpp = providers.find(
+      (provider: { provider?: unknown }) => provider?.provider === 'llamacpp'
+    )
+    return Array.isArray(llamacpp?.models) ? llamacpp.models : []
+  } catch (error) {
+    logger.warn('Failed to read persisted llamacpp model settings:', error)
+    return []
+  }
 }
 
 /**
@@ -185,18 +348,45 @@ export default class llamacpp_extension extends AIEngine {
   private userModelsMax: number = 1
   private loadedChatOrder: string[] = []
 
+  // Backend discovery + router spawn run off the onLoad critical path; awaited
+  // via ensureRouterReady() before any model load so inference never races it.
+  private backgroundInit?: Promise<void>
+
   override async onLoad(): Promise<void> {
     super.onLoad() // Calls registerEngine() from AIEngine
 
+    await this.migrateLocalStorageToFile()
+
     let settings = structuredClone(SETTINGS) // Clone to modify settings definition before registration
 
-    if (!IS_MAC) {
-      const fitItem = settings.find((s) => s.key === 'fit')
-      if (fitItem) fitItem.controllerProps.value = true
+    // Migration: legacy `version_backend` (single composite string) → split
+    // into `llamacpp_version` + `llamacpp_backend`. Read from localStorage
+    // before registerSettings overwrites the persisted set.
+    try {
+      const prior = await this.getSettings()
+      const legacy = prior.find((s) => s.key === 'version_backend')
+      const legacyValue = legacy?.controllerProps?.value
+      if (
+        typeof legacyValue === 'string' &&
+        legacyValue.includes('/') &&
+        legacyValue !== 'none'
+      ) {
+        const [v, b] = legacyValue.split('/')
+        if (v && b) {
+          const vSetting = settings.find((s) => s.key === 'llamacpp_version')
+          const bSetting = settings.find((s) => s.key === 'llamacpp_backend')
+          if (vSetting) vSetting.controllerProps.value = v
+          if (bSetting) bSetting.controllerProps.value = b
+          logger.info(
+            `Migrated legacy version_backend '${legacyValue}' → version='${v}', backend='${b}'`
+          )
+        }
+      }
+    } catch (e) {
+      logger.warn('version_backend migration check failed (ignored):', e)
     }
 
-    // This makes the settings (including the backend options and initial value) available to the Jan UI.
-    this.registerSettings(settings)
+    await this.registerSettings(settings)
 
     let loadedConfig: any = {}
     for (const item of settings) {
@@ -208,15 +398,11 @@ export default class llamacpp_extension extends AIEngine {
       )
     }
     this.config = loadedConfig as LlamacppConfig
+    this.recomposeVersionBackend()
 
-    // Migration v1: upgrade f16 KV cache defaults to q8_0
-    await this.migrateKvCacheDefaults()
-
-    // Migration v2: disable fit by default
-    await this.migrateFitDefault()
-
-    // Migration v3: enable fit on Windows/Linux with a discrete GPU
-    await this.migrateFitPlatformDefault()
+    // Auto-fit is disabled by default on all platforms; ctx-size owns context
+    // sizing. Force off for users a prior build left with fit enabled.
+    await this.migrateFitOff()
 
     await this.migrateAutoUnloadToModelsMax()
 
@@ -226,6 +412,8 @@ export default class llamacpp_extension extends AIEngine {
     // This sets the base directory where model files for this provider are stored.
     await this.getProviderPath()
 
+    await this.migratePersistedModelSettingsToYaml()
+
     // Set up validation event listeners to bridge Tauri events to frontend
     this.unlistenValidationStarted = await listen<{
       modelId: string
@@ -234,19 +422,187 @@ export default class llamacpp_extension extends AIEngine {
       events.emit(DownloadEvent.onModelValidationStarted, event.payload)
     })
 
-    // configureBackends is async; await it so the router has a backend to
-    // launch. Failures here previously surfaced via unhandled rejection — the
-    // try/catch below preserves that fail-soft behavior for the router step.
-    try {
-      await this.configureBackends()
-    } catch (e) {
-      logger.error('configureBackends failed during onLoad:', e)
-    }
+    // Defer the slow, fail-soft startup (network + subprocess) off onLoad so
+    // the UI unblocks; performLoad awaits it via ensureRouterReady().
+    //
+    // When a usable backend is already installed, start the router first so
+    // inference is available without waiting on the network-bound update check,
+    // then run configureBackends and restart the router only if the update
+    // swapped the backend. On a fresh install (no backend yet) configureBackends
+    // must run first to download one before the router can start.
+    this.backgroundInit = (async () => {
+      if (await this.hasInstalledBackend()) {
+        const before = this.config?.version_backend
+        try {
+          await this.startRouter()
+        } catch (e) {
+          logger.error('Router failed to start during onLoad:', e)
+        }
+        try {
+          await this.configureBackends()
+        } catch (e) {
+          logger.error('configureBackends failed during onLoad:', e)
+        }
+        const after = this.config?.version_backend
+        if (
+          after &&
+          after !== 'none' &&
+          after.includes('/') &&
+          after !== before
+        ) {
+          try {
+            await this.startRouter()
+          } catch (e) {
+            logger.error('Router restart after backend update failed:', e)
+          }
+        }
+      } else {
+        try {
+          await this.configureBackends()
+        } catch (e) {
+          logger.error('configureBackends failed during onLoad:', e)
+        }
+        try {
+          await this.startRouter()
+        } catch (e) {
+          logger.error('Router failed to start during onLoad:', e)
+        }
+      }
+    })()
+  }
 
+  // True when config.version_backend names a backend that's already downloaded,
+  // so the router can spawn without waiting on configureBackends.
+  private async hasInstalledBackend(): Promise<boolean> {
+    const vb = this.config?.version_backend
+    if (!vb || vb === 'none' || !vb.includes('/')) return false
+    const [version, backend] = vb.split('/')
+    if (!version || !backend) return false
     try {
-      await this.startRouter()
+      return await isBackendInstalled(backend, version)
     } catch (e) {
-      logger.error('Router failed to start during onLoad:', e)
+      logger.warn('isBackendInstalled probe failed during onLoad:', e)
+      return false
+    }
+  }
+
+  override async getSettings(): Promise<SettingComponentProps[]> {
+    return readSettingsFile()
+  }
+
+  override async updateSettings(
+    componentProps: Partial<SettingComponentProps>[]
+  ): Promise<void> {
+    const current = await readSettingsFile()
+    const changed: { key: string; value: unknown }[] = []
+    const updated = current.length
+      ? current.map((s) => {
+          const patch = componentProps.find((p) => p.key === s.key)
+          if (patch?.controllerProps) {
+            const nextValue = (patch.controllerProps as { value?: unknown })
+              .value
+            const prevValue = (s.controllerProps as { value?: unknown }).value
+            if (nextValue !== prevValue) {
+              changed.push({ key: s.key, value: nextValue })
+            }
+            ;(s.controllerProps as { value?: unknown }).value = nextValue
+          }
+          return s
+        })
+      : ((): SettingComponentProps[] => {
+          const arr = componentProps as SettingComponentProps[]
+          for (const s of arr) {
+            changed.push({
+              key: s.key,
+              value: (s.controllerProps as { value?: unknown })?.value,
+            })
+          }
+          return arr
+        })()
+    await writeSettingsFile(updated)
+    for (const { key, value } of changed) {
+      this.onSettingUpdate(key, value)
+    }
+  }
+
+  override async registerSettings(
+    settings: SettingComponentProps[]
+  ): Promise<void> {
+    settings.forEach((s) => {
+      s.extensionName = this.name
+    })
+    const old = await readSettingsFile()
+    if (old.length) {
+      settings.forEach((s) => {
+        const prev = old.find((o) => o.key === s.key)
+        if (!prev) return
+        const cp = s.controllerProps as Record<string, unknown>
+        const pcp = prev.controllerProps as Record<string, unknown>
+        if (pcp.value !== undefined) cp.value = pcp.value
+        if ('options' in cp) {
+          const newOptions = (cp.options as unknown[]) ?? []
+          if (newOptions.length === 0 && Array.isArray(pcp.options)) {
+            cp.options = pcp.options
+          }
+          const opts = (cp.options as { value: unknown }[]) ?? []
+          if (opts.length && !opts.some((o) => o.value === cp.value)) {
+            cp.value = opts[0]?.value
+          }
+        }
+      })
+    }
+    await writeSettingsFile(settings)
+  }
+
+  private async migrateLocalStorageToFile(): Promise<void> {
+    if (await settingsFileExists()) return
+    if (!this.name) return
+    let raw: string | null = null
+    try {
+      raw = localStorage.getItem(this.name)
+    } catch {
+      raw = null
+    }
+    if (!raw) return
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        await writeSettingsFile(parsed as SettingComponentProps[])
+        logger.info(
+          `Migrated llamacpp settings from localStorage → file (${parsed.length} entries)`
+        )
+      }
+    } catch (e) {
+      logger.warn('Failed to migrate localStorage settings to file:', e)
+      return
+    }
+    try {
+      localStorage.removeItem(this.name)
+    } catch (e) {
+      logger.warn('Failed to clear migrated localStorage entry:', e)
+    }
+  }
+
+  private async persistRecommended(
+    key: string,
+    value: string
+  ): Promise<void> {
+    const settings = await readSettingsFile()
+    const entry = settings.find((s) => s.key === key)
+    if (!entry) return
+    const cp = entry.controllerProps as { recommended?: string }
+    if (cp.recommended === value) return
+    cp.recommended = value
+    await writeSettingsFile(settings)
+  }
+
+  private recomposeVersionBackend(): void {
+    const v = this.config?.llamacpp_version
+    const b = this.config?.llamacpp_backend
+    if (v && b && v !== 'none' && b !== 'none') {
+      this.config.version_backend = `${v}/${b}`
+    } else if (!this.config.version_backend) {
+      this.config.version_backend = ''
     }
   }
 
@@ -298,14 +654,16 @@ export default class llamacpp_extension extends AIEngine {
       const n = parseInt(rawMax, 10)
       if (!Number.isNaN(n) && n >= 0) modelsMax = n
     }
-    // Reserve extra slots for embedding models so loading an embedder doesn't
-    // evict the user's chat model. `models_max` governs chat models only;
-    // Jan pre-evicts the oldest chat model in `performLoad` so the router's
-    // LRU never picks the embedding. 0 (unlimited) stays unlimited.
+    // Reserve a single extra slot when any embedder is installed, so loading
+    // an embedder doesn't evict the user's chat model. Only one embedding is
+    // ever loaded at a time (RAG calls load() once per request), so the bonus
+    // is +1 regardless of how many embedders are installed. 0 (unlimited)
+    // stays unlimited.
     const userModelsMax = modelsMax
     this.userModelsMax = userModelsMax
-    if (modelsMax > 0 && embeddingCount > 0) {
-      modelsMax += embeddingCount
+    const embeddingSlotBonus = embeddingCount > 0 ? 1 : 0
+    if (modelsMax > 0 && embeddingSlotBonus > 0) {
+      modelsMax += embeddingSlotBonus
     }
 
     // Defensive: if a router is already running (hot reload / dev), stop it
@@ -321,6 +679,13 @@ export default class llamacpp_extension extends AIEngine {
       /* ignore probe failures */
     }
 
+    // --no-webui was renamed to --no-ui in upstream b9222. Keep the legacy
+    // flag for older backends; the deprecated form still works on newer ones
+    // but emits a warning, so prefer the new spelling when available.
+    const NO_UI_RENAME_BUILD = 9222
+    const noUiFlag =
+      build !== null && build >= NO_UI_RENAME_BUILD ? '--no-ui' : '--no-webui'
+
     const info = await invoke<{ port: number; api_key: string; pid: number }>(
       'plugin:llamacpp|start_router',
       {
@@ -329,7 +694,7 @@ export default class llamacpp_extension extends AIEngine {
         port,
         apiKey,
         modelsMax,
-        defaultArgs: [] as string[],
+        defaultArgs: [noUiFlag],
         envs,
       }
     )
@@ -337,7 +702,7 @@ export default class llamacpp_extension extends AIEngine {
     this.routerPort = info.port
     this.routerApiKey = info.api_key
     logger.info(
-      `Router started on port ${info.port} (pid ${info.pid}, models_max=${modelsMax} [user=${userModelsMax}, +${embeddingCount} embedding], preset=${presetPath})`
+      `Router started on port ${info.port} (pid ${info.pid}, models_max=${modelsMax} [user=${userModelsMax}, +${embeddingSlotBonus} embedding, ${embeddingCount} installed], preset=${presetPath})`
     )
   }
 
@@ -487,39 +852,8 @@ export default class llamacpp_extension extends AIEngine {
     }
   }
 
-  private async migrateKvCacheDefaults(): Promise<void> {
-    const MIGRATION_KEY = 'llamacpp_kv_cache_migrated_v1'
-    if (localStorage.getItem(MIGRATION_KEY)) return
-
-    const keysToMigrate = ['cache_type_k', 'cache_type_v'] as const
-    const needsMigration = keysToMigrate.some(
-      (k) => this.config[k] === 'f16'
-    )
-
-    if (needsMigration) {
-      const settings = await this.getSettings()
-      await this.updateSettings(
-        settings.map((item) => {
-          if (
-            keysToMigrate.includes(item.key as (typeof keysToMigrate)[number]) &&
-            item.controllerProps.value === 'f16'
-          ) {
-            item.controllerProps.value = 'q8_0'
-          }
-          return item
-        })
-      )
-      for (const k of keysToMigrate) {
-        if (this.config[k] === 'f16') this.config[k] = 'q8_0'
-      }
-      logger.info('Migrated KV cache types from f16 to q8_0')
-    }
-
-    localStorage.setItem(MIGRATION_KEY, '1')
-  }
-
-  private async migrateFitDefault(): Promise<void> {
-    const MIGRATION_KEY = 'llamacpp_fit_disabled_v1'
+  private async migrateFitOff(): Promise<void> {
+    const MIGRATION_KEY = 'llamacpp_fit_off_v1'
     if (localStorage.getItem(MIGRATION_KEY)) return
 
     if (this.config.fit === true) {
@@ -533,51 +867,62 @@ export default class llamacpp_extension extends AIEngine {
         })
       )
       this.config.fit = false
-      logger.info('Migrated fit setting: disabled by default')
+      logger.info('Migrated fit setting: disabled')
     }
 
     localStorage.setItem(MIGRATION_KEY, '1')
   }
 
-  private async migrateFitPlatformDefault(): Promise<void> {
-    const MIGRATION_KEY = 'llamacpp_fit_platform_v2'
-    if (localStorage.getItem(MIGRATION_KEY)) return
+  private async migratePersistedModelSettingsToYaml(): Promise<void> {
+    if (localStorage.getItem(LLAMACPP_MODEL_SETTINGS_BACKFILL_KEY)) return
 
-    if (IS_MAC) {
-      localStorage.setItem(MIGRATION_KEY, '1')
+    const persistedModels = readPersistedLlamacppModels()
+    if (persistedModels.length === 0) {
+      localStorage.setItem(LLAMACPP_MODEL_SETTINGS_BACKFILL_KEY, '1')
       return
     }
 
-    let hasDiscreteGpu = false
-    try {
-      const sysInfo = await getSystemInfo()
-      hasDiscreteGpu = (sysInfo?.gpus ?? []).some(
-        (g: any) =>
-          g?.nvidia_info != null ||
-          g?.vulkan_info?.device_type === 'DiscreteGpu'
-      )
-    } catch (error) {
-      // Skip writing the migration key so a transient probe failure retries.
-      logger.warn('Failed to probe GPU info for fit migration:', error)
-      return
+    const providerPath = await this.getProviderPath()
+
+    for (const persistedModel of persistedModels) {
+      const modelId =
+        typeof persistedModel.id === 'string' ? persistedModel.id : undefined
+      if (!modelId || !persistedModel.settings) continue
+
+      const configPath = await joinPath([
+        providerPath,
+        'models',
+        modelId,
+        'model.yml',
+      ])
+      if (!(await fs.existsSync(configPath))) continue
+
+      const cfg = (await invoke<ModelConfig>('read_yaml', {
+        path: configPath,
+      })) as ModelConfig & Record<string, unknown>
+
+      let touched = false
+      for (const [sidebarKey, persistedSetting] of Object.entries(
+        persistedModel.settings
+      )) {
+        const mapping = MODEL_SETTINGS_YAML_MAPPING[sidebarKey]
+        if (!mapping) continue
+
+        if (mapping.yamlKey in cfg) continue
+
+        const next = mapping.coerce(persistedSetting?.controller_props?.value)
+        if (next === null) continue
+
+        ;(cfg as Record<string, unknown>)[mapping.yamlKey] = next
+        touched = true
+      }
+
+      if (touched) {
+        await invoke<void>('write_yaml', { data: cfg, savePath: configPath })
+      }
     }
 
-    // Only upgrade the v1 auto-default; preserve any explicit user override.
-    if (this.config.fit === false && hasDiscreteGpu) {
-      const settings = await this.getSettings()
-      await this.updateSettings(
-        settings.map((item) => {
-          if (item.key === 'fit') {
-            item.controllerProps.value = true
-          }
-          return item
-        })
-      )
-      this.config.fit = true
-      logger.info('Migrated fit setting: enabled (discrete GPU detected)')
-    }
-
-    localStorage.setItem(MIGRATION_KEY, '1')
+    localStorage.setItem(LLAMACPP_MODEL_SETTINGS_BACKFILL_KEY, '1')
   }
 
   async configureBackends(): Promise<void> {
@@ -594,7 +939,9 @@ export default class llamacpp_extension extends AIEngine {
       let version_backends: { version: string; backend: string }[] = []
 
       try {
-        version_backends = await listSupportedBackends()
+        version_backends = await listSupportedBackends(
+          this.config.check_for_updates !== false
+        )
         if (version_backends.length === 0) {
           throw new Error(
             'No supported backend binaries found for this system. Backend selection and auto-update will be unavailable.'
@@ -614,9 +961,18 @@ export default class llamacpp_extension extends AIEngine {
       const storedBackendType = this.getStoredBackendType()
       let bestAvailableBackendString = ''
 
-      // Calculate the "best" backend first, as it's used for fallback and defaults
+      // "Recommended" is computed against upstream releases only — a
+      // user-side-loaded backend (Install from File) must not bias the
+      // suggestion. If we have no remote data (check_for_updates off or
+      // offline), there is no honest recommendation to surface.
+      const remoteOnly =
+        this.config.check_for_updates !== false
+          ? await fetchRemoteBackends()
+          : []
       bestAvailableBackendString =
-        await this.determineBestBackend(version_backends)
+        remoteOnly.length > 0
+          ? await this.determineBestBackend(remoteOnly)
+          : ''
 
       if (storedBackendType) {
         // Delegate migration check to Rust
@@ -658,84 +1014,99 @@ export default class llamacpp_extension extends AIEngine {
       }
 
       let settings = structuredClone(SETTINGS)
-      const backendSettingIndex = settings.findIndex(
-        (item) => item.key === 'version_backend'
-      )
-
-      let originalDefaultBackendValue = ''
-      if (backendSettingIndex !== -1) {
-        const backendSetting = settings[backendSettingIndex]
-        originalDefaultBackendValue = backendSetting.controllerProps
-          .value as string
-
-        backendSetting.controllerProps.options = version_backends.map((b) => {
-          const key = `${b.version}/${b.backend}`
-          return { value: key, name: key }
-        })
-
-        // Set the recommended backend based on bestAvailableBackendString
-        if (bestAvailableBackendString) {
-          backendSetting.controllerProps.recommended =
-            bestAvailableBackendString
-        }
-
-        const savedBackendSetting = await this.getSetting<string>(
-          'version_backend',
-          originalDefaultBackendValue
+      const versionSetting = settings.find((s) => s.key === 'llamacpp_version')
+      const backendSetting = settings.find((s) => s.key === 'llamacpp_backend')
+      if (!versionSetting || !backendSetting) {
+        throw new Error(
+          'Critical settings "llamacpp_version" / "llamacpp_backend" not found.'
         )
-
-        // Determine initial UI default based on priority:
-        // 1. Saved setting (if valid and not original default)
-        // 2. Best available for stored backend type or automatic best
-        // 3. Original default
-        let initialUiDefault = originalDefaultBackendValue
-
-        if (
-          savedBackendSetting &&
-          savedBackendSetting !== originalDefaultBackendValue
-        ) {
-          const [savedVersion, savedBackend] = savedBackendSetting.split('/')
-          if (savedVersion && savedBackend) {
-            // Map saved backend to new format if needed
-            const normalizedBackend = await mapOldBackendToNew(savedBackend)
-            initialUiDefault = `${savedVersion}/${normalizedBackend}`
-
-            // Store the backend type from the saved setting only if different
-            const currentStoredBackend = this.getStoredBackendType()
-            if (currentStoredBackend !== normalizedBackend) {
-              this.setStoredBackendType(normalizedBackend)
-              logger.info(
-                `Stored backend type preference from saved setting: ${normalizedBackend}`
-              )
-            }
-          }
-        } else if (bestAvailableBackendString) {
-          initialUiDefault = bestAvailableBackendString
-          // Store the backend type from the best available only if different
-          const [, backendType] = bestAvailableBackendString.split('/')
-          if (backendType) {
-            const currentStoredBackend = this.getStoredBackendType()
-            if (currentStoredBackend !== backendType) {
-              this.setStoredBackendType(backendType)
-              logger.info(
-                `Stored backend type preference from best available: ${backendType}`
-              )
-            }
-          }
-        }
-
-        backendSetting.controllerProps.value = initialUiDefault
-        logger.info(
-          `Initial UI default for version_backend set to: ${initialUiDefault}`
-        )
-      } else {
-        logger.error(
-          'Critical setting "version_backend" definition not found in SETTINGS.'
-        )
-        throw new Error('Critical setting "version_backend" not found.')
       }
 
-      this.registerSettings(settings)
+      // Read prior persisted values (may have been pre-populated by the
+      // legacy-migration pass in onLoad, or carry user-edited values from a
+      // prior session).
+      const priorPersisted = await this.getSettings()
+      const priorVersion = String(
+        priorPersisted.find((s) => s.key === 'llamacpp_version')?.controllerProps
+          .value ?? ''
+      )
+      const priorBackend = String(
+        priorPersisted.find((s) => s.key === 'llamacpp_backend')?.controllerProps
+          .value ?? ''
+      )
+
+      const allVersions = Array.from(
+        new Set(version_backends.map((b) => b.version))
+      )
+      versionSetting.controllerProps.options = allVersions.map((v) => ({
+        value: v,
+        name: v,
+      }))
+
+      const allBackends = Array.from(
+        new Set(version_backends.map((b) => b.backend))
+      )
+      backendSetting.controllerProps.options = allBackends.map((b) => ({
+        value: b,
+        name: b,
+      }))
+
+      const [bestVersion, bestBackend] =
+        bestAvailableBackendString.split('/')
+      if (bestVersion) versionSetting.controllerProps.recommended = bestVersion
+      if (bestBackend) backendSetting.controllerProps.recommended = bestBackend
+
+      // Decide initial UI values. Priority: valid prior selection → best-available.
+      let initialVersion = bestVersion || ''
+      let initialBackend = bestBackend || ''
+      if (
+        priorVersion &&
+        priorBackend &&
+        priorVersion !== 'none' &&
+        priorBackend !== 'none'
+      ) {
+        const normalizedBackend = await mapOldBackendToNew(priorBackend)
+        const composed = `${priorVersion}/${normalizedBackend}`
+        if (
+          version_backends.some(
+            (e) => `${e.version}/${e.backend}` === composed
+          )
+        ) {
+          initialVersion = priorVersion
+          initialBackend = normalizedBackend
+          const currentStoredBackend = this.getStoredBackendType()
+          if (currentStoredBackend !== normalizedBackend) {
+            this.setStoredBackendType(normalizedBackend)
+            logger.info(
+              `Stored backend type preference from saved setting: ${normalizedBackend}`
+            )
+          }
+        }
+      } else if (bestBackend) {
+        const currentStoredBackend = this.getStoredBackendType()
+        if (currentStoredBackend !== bestBackend) {
+          this.setStoredBackendType(bestBackend)
+          logger.info(
+            `Stored backend type preference from best available: ${bestBackend}`
+          )
+        }
+      }
+
+      versionSetting.controllerProps.value = initialVersion
+      backendSetting.controllerProps.value = initialBackend
+      logger.info(
+        `Initial UI defaults: llamacpp_version='${initialVersion}', llamacpp_backend='${initialBackend}'`
+      )
+
+      // Must await — registerSettings is async; without await, the
+      // persistRecommended writes below race with its merge+write and lose.
+      await this.registerSettings(settings)
+
+      // core's registerSettings preserves the previous `recommended` over the
+      // new one (see extension.ts:142-148). Force-write afterward so a stale
+      // recommendation from a prior session can't outlive a fresh compute.
+      await this.persistRecommended('llamacpp_version', bestVersion || '')
+      await this.persistRecommended('llamacpp_backend', bestBackend || '')
 
       let effectiveBackendString = this.config.version_backend
       let backendWasDownloaded = false
@@ -758,29 +1129,32 @@ export default class llamacpp_extension extends AIEngine {
           `Fresh installation or invalid backend detected, using: ${effectiveBackendString}`
         )
 
-        // Update the config immediately
-        this.config.version_backend = effectiveBackendString
+        const [newV, newB] = effectiveBackendString.split('/')
+        this.config.llamacpp_version = newV
+        this.config.llamacpp_backend = newB
+        this.recomposeVersionBackend()
 
-        // Update the settings to reflect the change in UI
         const updatedSettings = await this.getSettings()
         await this.updateSettings(
           updatedSettings.map((item) => {
-            if (item.key === 'version_backend') {
-              item.controllerProps.value = effectiveBackendString
+            if (item.key === 'llamacpp_version') {
+              item.controllerProps.value = newV
+            } else if (item.key === 'llamacpp_backend') {
+              item.controllerProps.value = newB
             }
             return item
           })
         )
         logger.info(`Updated UI settings to show: ${effectiveBackendString}`)
 
-        // Emit for updating fe
         if (events && typeof events.emit === 'function') {
-          logger.info(
-            `Emitting settingsChanged event for version_backend with value: ${effectiveBackendString}`
-          )
           events.emit('settingsChanged', {
-            key: 'version_backend',
-            value: effectiveBackendString,
+            key: 'llamacpp_version',
+            value: newV,
+          })
+          events.emit('settingsChanged', {
+            key: 'llamacpp_backend',
+            value: newB,
           })
         }
       }
@@ -801,7 +1175,7 @@ export default class llamacpp_extension extends AIEngine {
         }
       }
 
-      if (this.config.auto_update_engine) {
+      if (this.config.auto_update_engine && this.config.check_for_updates) {
         const updateResult = await this.handleAutoUpdate(
           bestAvailableBackendString
         )
@@ -818,12 +1192,17 @@ export default class llamacpp_extension extends AIEngine {
       // Run dependency verification once after the backend is confirmed
       // installed. This covers both fresh downloads and pre-existing installs,
       // and runs only once per app startup via the isConfiguringBackends guard.
-      if (effectiveBackendString) {
+      if (effectiveBackendString && this.config.verify_backend_deps !== false) {
         // effectiveBackendString is expected to be "<version>/<backend>" (e.g.
         // "b4589/linux-cuda-12"). Any other shape silently skips verification.
         const [version, backend] = effectiveBackendString.split('/')
         if (version && backend) {
-          await this.verifyBackendDeps(backend, version)
+          // Advisory and fail-soft — defer to browser idle so it yields to the
+          // router (already up by now) and the UI instead of running inline.
+          const verify = () => void this.verifyBackendDeps(backend, version)
+          if (typeof window.requestIdleCallback === 'function')
+            window.requestIdleCallback(verify, { timeout: 3000 })
+          else setTimeout(verify, 0)
         }
       }
     } finally {
@@ -846,7 +1225,9 @@ export default class llamacpp_extension extends AIEngine {
   async refreshBackendOptions(): Promise<void> {
     let version_backends: { version: string; backend: string }[] = []
     try {
-      version_backends = await listSupportedBackends()
+      version_backends = await listSupportedBackends(
+        this.config.check_for_updates !== false
+      )
     } catch (e) {
       logger.error(
         `refreshBackendOptions: failed to list supported backends: ${String(e)}`
@@ -860,49 +1241,61 @@ export default class llamacpp_extension extends AIEngine {
     version_backends.sort((a, b) => b.version.localeCompare(a.version))
 
     const settings = await this.getSettings()
-    const backendSetting = settings.find(
-      (item) => item.key === 'version_backend'
-    )
-    if (!backendSetting) {
+    const versionSetting = settings.find((s) => s.key === 'llamacpp_version')
+    const backendSetting = settings.find((s) => s.key === 'llamacpp_backend')
+    if (!versionSetting || !backendSetting) {
       logger.error(
-        'refreshBackendOptions: version_backend setting not found in persisted settings'
+        'refreshBackendOptions: llamacpp_version/llamacpp_backend not found in persisted settings'
       )
       return
     }
 
-    const newOptions = version_backends.map((b) => {
-      const key = `${b.version}/${b.backend}`
-      return { value: key, name: key }
-    })
+    const allVersions = Array.from(
+      new Set(version_backends.map((b) => b.version))
+    )
+    const allBackends = Array.from(
+      new Set(version_backends.map((b) => b.backend))
+    )
+    ;(versionSetting.controllerProps as DropdownComponentProps).options =
+      allVersions.map((v) => ({
+        value: v,
+        name: v,
+      }))
+    ;(backendSetting.controllerProps as DropdownComponentProps).options =
+      allBackends.map((b) => ({
+        value: b,
+        name: b,
+      }))
 
-    backendSetting.controllerProps.options = newOptions
-
-    // Preserve current selection if still present; otherwise fall back to
-    // the best available so the UI stays consistent.
-    const currentValue = backendSetting.controllerProps.value as
-      | string
-      | undefined
-    const stillPresent =
-      typeof currentValue === 'string' &&
-      newOptions.some((o) => o.value === currentValue)
-    if (!stillPresent) {
+    const currentV = String(versionSetting.controllerProps.value ?? '')
+    const currentB = String(backendSetting.controllerProps.value ?? '')
+    const composedStillPresent =
+      currentV &&
+      currentB &&
+      version_backends.some(
+        (e) => e.version === currentV && e.backend === currentB
+      )
+    if (!composedStillPresent) {
       const best = await this.determineBestBackend(version_backends)
-      if (best) {
-        backendSetting.controllerProps.value = best
-        this.config.version_backend = best
+      const [bv, bb] = best.split('/')
+      if (bv && bb) {
+        versionSetting.controllerProps.value = bv
+        backendSetting.controllerProps.value = bb
+        this.config.llamacpp_version = bv
+        this.config.llamacpp_backend = bb
+        this.recomposeVersionBackend()
       }
     }
 
-    // registerSettings overwrites the persisted settings (including the
-    // new options array). updateSettings only copies `value`, which would
-    // silently drop our options change.
     await this.registerSettings(settings)
 
-    // Tell the rest of the app (GlobalEventHandler) to refetch providers
-    // so the dropdown re-renders with the new options.
     if (events && typeof events.emit === 'function') {
       events.emit('settingsChanged', {
-        key: 'version_backend',
+        key: 'llamacpp_version',
+        value: versionSetting.controllerProps.value,
+      })
+      events.emit('settingsChanged', {
+        key: 'llamacpp_backend',
         value: backendSetting.controllerProps.value,
       })
     }
@@ -993,18 +1386,18 @@ export default class llamacpp_extension extends AIEngine {
       // Persist settings and stored preference before mutating in-memory config,
       // so that if any of these steps fail, config remains consistent.
 
-      // Update settings first — if this fails, we haven't mutated any state yet
       const settings = await this.getSettings()
       await this.updateSettings(
         settings.map((item) => {
-          if (item.key === 'version_backend') {
-            item.controllerProps.value = targetBackendString
+          if (item.key === 'llamacpp_version') {
+            item.controllerProps.value = version
+          } else if (item.key === 'llamacpp_backend') {
+            item.controllerProps.value = backend
           }
           return item
         })
       )
 
-      // Store the backend type preference only if it changed
       if (currentStoredBackend !== effectiveBackendType) {
         this.setStoredBackendType(effectiveBackendType)
         logger.info(
@@ -1012,20 +1405,21 @@ export default class llamacpp_extension extends AIEngine {
         )
       }
 
-      // All critical side effects succeeded — now commit to in-memory config
-      this.config.version_backend = targetBackendString
+      this.config.llamacpp_version = version
+      this.config.llamacpp_backend = backend
+      this.recomposeVersionBackend()
       this.config.device = ''
 
       logger.info(`Successfully updated to backend: ${targetBackendString}`)
 
-      // Emit for updating frontend
       if (events && typeof events.emit === 'function') {
-        logger.info(
-          `Emitting settingsChanged event for version_backend with value: ${targetBackendString}`
-        )
         events.emit('settingsChanged', {
-          key: 'version_backend',
-          value: targetBackendString,
+          key: 'llamacpp_version',
+          value: version,
+        })
+        events.emit('settingsChanged', {
+          key: 'llamacpp_backend',
+          value: backend,
         })
       }
 
@@ -1085,7 +1479,7 @@ export default class llamacpp_extension extends AIEngine {
     }
 
     // Use Rust checkBackendForUpdates logic implicitly here by using the helpers
-    const version_backends = await listSupportedBackends()
+    const version_backends = await listSupportedBackends(true)
     const checkResult = await checkBackendForUpdates(
       this.config.version_backend,
       version_backends
@@ -1126,7 +1520,7 @@ export default class llamacpp_extension extends AIEngine {
     targetBackend?: string
   }> {
     try {
-      const version_backends = await listSupportedBackends()
+      const version_backends = await listSupportedBackends(true)
       const result = await checkBackendForUpdates(
         this.config.version_backend,
         version_backends
@@ -1201,6 +1595,12 @@ export default class llamacpp_extension extends AIEngine {
       this.unlistenValidationStarted()
     }
 
+    // Let any in-flight deferred startup finish so stop_router can't race a
+    // concurrent startRouter and leave an orphaned process.
+    if (this.backgroundInit) {
+      await this.backgroundInit.catch(() => undefined)
+    }
+
     try {
       await invoke('plugin:llamacpp|stop_router')
     } catch (e) {
@@ -1211,10 +1611,7 @@ export default class llamacpp_extension extends AIEngine {
   }
 
   onSettingUpdate<T>(key: string, value: T): void {
-    if (key === 'version_backend') {
-      // Skip entirely if updateBackend() is already handling it —
-      // updateBackend() will commit to in-memory config itself after all
-      // side effects succeed.
+    if (key === 'llamacpp_version' || key === 'llamacpp_backend') {
       if (this.isUpdatingBackend) {
         return
       }
@@ -1222,13 +1619,59 @@ export default class llamacpp_extension extends AIEngine {
 
     this.config[key] = value
 
-    if (key === 'version_backend') {
-      const valueStr = value as string
-      // Async logic wrapped in IIFE since onSettingUpdate is void
+    if (key === 'llamacpp_version' || key === 'llamacpp_backend') {
       ;(async () => {
         try {
+          let v = this.config.llamacpp_version
+          let b = this.config.llamacpp_backend
+          if (!v || !b || v === 'none' || b === 'none') return
+
+          // Validate (v, b) combination exists; if not, auto-resolve the
+          // backend to the best one available for the chosen version.
+          const supported = await listSupportedBackends(
+            this.config.check_for_updates !== false
+          )
+          const combos = new Set(
+            supported.map((e) => `${e.version}/${e.backend}`)
+          )
+          if (!combos.has(`${v}/${b}`)) {
+            const candidates = supported.filter((e) => e.version === v)
+            if (candidates.length === 0) {
+              logger.warn(
+                `No backends available for version '${v}'; ignoring update.`
+              )
+              return
+            }
+            const best = await this.determineBestBackend(candidates)
+            const [, bb] = best.split('/')
+            if (!bb) return
+            b = bb
+            this.config.llamacpp_backend = bb
+            const settings = await this.getSettings()
+            await this.updateSettings(
+              settings.map((item) => {
+                if (item.key === 'llamacpp_backend') {
+                  item.controllerProps.value = bb
+                }
+                return item
+              })
+            )
+            if (events && typeof events.emit === 'function') {
+              events.emit('settingsChanged', {
+                key: 'llamacpp_backend',
+                value: bb,
+              })
+            }
+          }
+
+          this.recomposeVersionBackend()
+          const composite = this.config.version_backend
           const currentStored = this.getStoredBackendType() || undefined
-          const result = await handleSettingUpdate(key, valueStr, currentStored)
+          const result = await handleSettingUpdate(
+            'version_backend',
+            composite,
+            currentStored
+          )
 
           if (result.backend_type_updated && result.effective_backend_type) {
             this.setStoredBackendType(result.effective_backend_type)
@@ -1254,7 +1697,23 @@ export default class llamacpp_extension extends AIEngine {
       this.llamacpp_env = value as string
     } else if (key === 'timeout') {
       this.timeout = value as number
+    } else if (PRESET_AFFECTING_KEYS.has(key)) {
+      // A live router was started with the previous preset; without a restart
+      // the new value is invisible to inference. Debounced so a flurry of
+      // slider/dropdown updates collapses into one bounce.
+      this.scheduleRouterRestart()
     }
+  }
+
+  private routerRestartTimer: ReturnType<typeof setTimeout> | null = null
+  private scheduleRouterRestart(): void {
+    if (this.routerRestartTimer) clearTimeout(this.routerRestartTimer)
+    this.routerRestartTimer = setTimeout(() => {
+      this.routerRestartTimer = null
+      this.startRouter().catch((e) =>
+        logger.warn('Router restart after settings update failed:', e)
+      )
+    }, 600)
   }
 
   private async generateApiKey(modelId: string, port: string): Promise<string> {
@@ -1420,11 +1879,20 @@ export default class llamacpp_extension extends AIEngine {
       await fs.mkdir(modelsDir)
     }
 
-    await this.migrateLegacyModels()
+    // Legacy migration is best-effort: a failure here must never blank the
+    // model list. Pre-router users without anything to migrate would never
+    // notice, but a single throw used to bubble out of list() and return [].
+    try {
+      await this.migrateLegacyModels()
+    } catch (err) {
+      logger.warn(`list: migrateLegacyModels failed, continuing: ${String(err)}`)
+    }
 
     let modelIds: string[] = []
 
-    // DFS
+    // DFS. Mirror the defensive pattern in preset.ts: an unreadable entry
+    // (Windows AV quarantine, junction, locked file) must not kill the whole
+    // scan — log and continue past it.
     let stack = [modelsDir]
     while (stack.length > 0) {
       const currentDir = stack.pop()
@@ -1438,52 +1906,63 @@ export default class llamacpp_extension extends AIEngine {
         continue
       }
 
-      // otherwise, look into subdirectories
-      const children = await fs.readdirSync(currentDir)
+      let children: string[] = []
+      try {
+        children = await fs.readdirSync(currentDir)
+      } catch (err) {
+        logger.warn(`list: readdir failed for ${currentDir}: ${String(err)}`)
+        continue
+      }
       for (const child of children) {
-        // skip files
-        const dirInfo = await fs.fileStat(child)
-        if (!dirInfo.isDirectory) {
-          continue
+        try {
+          const dirInfo = await fs.fileStat(child)
+          if (!dirInfo?.isDirectory) continue
+          stack.push(child)
+        } catch (err) {
+          logger.warn(`list: stat failed for ${child}: ${String(err)}`)
         }
-
-        stack.push(child)
       }
     }
 
+    // Per-model isolation: one malformed model.yml (or a write_yaml failure
+    // inside resolveEmbeddingConfig) must not discard the other entries.
     let modelInfos: modelInfo[] = []
     for (const modelId of modelIds) {
-      const path = await joinPath([modelsDir, modelId, 'model.yml'])
-      const modelConfig = await invoke<ModelConfig>('read_yaml', { path })
-      const isEmbedding = await this.resolveEmbeddingConfig(
-        modelId,
-        modelConfig
-      )
-
-      const capabilities: string[] = []
-      if (modelConfig.mmproj_path) {
-        const caps = await this.readMmprojCapabilities(
-          modelConfig.mmproj_path
+      try {
+        const path = await joinPath([modelsDir, modelId, 'model.yml'])
+        const modelConfig = await invoke<ModelConfig>('read_yaml', { path })
+        const isEmbedding = await this.resolveEmbeddingConfig(
+          modelId,
+          modelConfig
         )
-        if (caps.vision) capabilities.push('vision')
-        if (caps.audio) capabilities.push('audio')
+
+        const capabilities: string[] = []
+        if (modelConfig.mmproj_path) {
+          const caps = await this.readMmprojCapabilities(
+            modelConfig.mmproj_path
+          )
+          if (caps.vision) capabilities.push('vision')
+          if (caps.audio) capabilities.push('audio')
+        }
+
+        const mp = modelConfig.model_path ?? ''
+        const isAbsolute = mp.startsWith('/') || /^[A-Za-z]:[\\/]/.test(mp)
+
+        const modelInfo = {
+          id: modelId,
+          name: modelConfig.name ?? modelId,
+          quant_type: undefined, // TODO: parse quantization type from model.yml or model.gguf
+          providerId: this.provider,
+          port: 0, // port is not known until the model is loaded
+          sizeBytes: modelConfig.size_bytes ?? 0,
+          embedding: isEmbedding,
+          imported: isAbsolute,
+          capabilities: capabilities.length > 0 ? capabilities : undefined,
+        } as modelInfo
+        modelInfos.push(modelInfo)
+      } catch (err) {
+        logger.warn(`list: skipping model ${modelId}: ${String(err)}`)
       }
-
-      const mp = modelConfig.model_path ?? ''
-      const isAbsolute = mp.startsWith('/') || /^[A-Za-z]:[\\/]/.test(mp)
-
-      const modelInfo = {
-        id: modelId,
-        name: modelConfig.name ?? modelId,
-        quant_type: undefined, // TODO: parse quantization type from model.yml or model.gguf
-        providerId: this.provider,
-        port: 0, // port is not known until the model is loaded
-        sizeBytes: modelConfig.size_bytes ?? 0,
-        embedding: isEmbedding,
-        imported: isAbsolute,
-        capabilities: capabilities.length > 0 ? capabilities : undefined,
-      } as modelInfo
-      modelInfos.push(modelInfo)
     }
 
     return modelInfos
@@ -1570,16 +2049,25 @@ export default class llamacpp_extension extends AIEngine {
         }
       }
 
-      // otherwise, look into subdirectories
-      const children = await fs.readdirSync(currentDir)
-      for (const child of children) {
-        // skip files
-        const dirInfo = await fs.fileStat(child)
-        if (!dirInfo.isDirectory) {
-          continue
+      let subdirs: string[] = []
+      try {
+        subdirs = await fs.readdirSync(currentDir)
+      } catch (err) {
+        logger.warn(
+          `migrateLegacyModels: readdir failed for ${currentDir}: ${String(err)}`
+        )
+        continue
+      }
+      for (const child of subdirs) {
+        try {
+          const dirInfo = await fs.fileStat(child)
+          if (!dirInfo?.isDirectory) continue
+          stack.push(child)
+        } catch (err) {
+          logger.warn(
+            `migrateLegacyModels: stat failed for ${child}: ${String(err)}`
+          )
         }
-
-        stack.push(child)
       }
     }
     localStorage.setItem('cortex_models_migrated', 'true')
@@ -1740,6 +2228,14 @@ export default class llamacpp_extension extends AIEngine {
         savePath: newModelConfigPath,
       })
     )
+
+    // The router's preset still references the old model id until we
+    // regenerate; without this a `POST /models/load <new-id>` would 404.
+    try {
+      await this.startRouter()
+    } catch (e) {
+      logger.warn(`Router restart after model rename (${modelId} → ${model.id}) failed`, e)
+    }
   }
 
   override async import(modelId: string, opts: ImportOptions): Promise<void> {
@@ -1823,7 +2319,6 @@ export default class llamacpp_extension extends AIEngine {
           onProgress
         )
       } catch (error) {
-        logger.error('Error downloading model:', modelId, opts, error)
         const errorMessage =
           error instanceof Error ? error.message : String(error)
 
@@ -1841,21 +2336,19 @@ export default class llamacpp_extension extends AIEngine {
           errorMessage.includes('Size verification failed') ||
           errorMessage.includes('Failed to verify file')
 
+        // Pause and cancel both surface here as a cancellation; treat as a
+        // stop (emit stopped, return) so it never becomes an error toast.
         if (isCancellationError) {
-          logger.info('Download cancelled for model:', modelId)
-          // Emit download stopped event instead of error
+          logger.info('Download stopped for model:', modelId)
           events.emit(DownloadEvent.onFileDownloadStopped, {
             modelId,
             downloadType: 'Model',
           })
-        } else if (isValidationError) {
-          logger.error(
-            'Validation failed for model:',
-            modelId,
-            'Error:',
-            errorMessage
-          )
+          return
+        }
 
+        logger.error('Error downloading model:', modelId, opts, error)
+        if (isValidationError) {
           // Cancel any other download tasks for this model
           try {
             this.abortImport(modelId)
@@ -1887,6 +2380,7 @@ export default class llamacpp_extension extends AIEngine {
     const fullModelPath = await joinPath([janDataFolderPath, modelPath])
     let isEmbedding = false
     let mtpLayers = 0
+    let resolvedName: string | undefined
 
     try {
       // Validate main model file
@@ -1899,6 +2393,12 @@ export default class llamacpp_extension extends AIEngine {
         isEmbedding = true
       }
       mtpLayers = detectMtpLayersFromGgufMeta(modelMetadata.metadata)
+
+      const rawName = modelMetadata.metadata?.['general.name']
+      if (typeof rawName === 'string') {
+        const normalized = rawName.trim().replace(/\s+/g, '-')
+        if (normalized.length > 0) resolvedName = normalized
+      }
 
       // Validate mmproj file if present
       if (mmprojPath) {
@@ -1925,12 +2425,16 @@ export default class llamacpp_extension extends AIEngine {
       ).size
     }
 
-    // TODO: add name as import() argument
+    if (!resolvedName) {
+      const base = opts.modelPath.split(/[\\/]/).pop() ?? modelId
+      resolvedName = base.replace(/\.gguf$/i, '') || modelId
+    }
+
     // TODO: add updateModelConfig() method
     const modelConfig = {
       model_path: modelPath,
       mmproj_path: mmprojPath,
-      name: modelId,
+      name: resolvedName,
       size_bytes,
       model_sha256: opts.modelSha256,
       model_size_bytes: opts.modelSize,
@@ -2014,6 +2518,15 @@ export default class llamacpp_extension extends AIEngine {
     await this.deleteModelFolder(modelId)
   }
 
+  override async pauseImport(modelId: string): Promise<void> {
+    const taskId = this.createDownloadTaskId(modelId)
+    const downloadManager = window.core.extensionManager.getByName(
+      '@janhq/download-extension'
+    )
+    // Pause keeps the partial .tmp for resume; the model folder is preserved.
+    await downloadManager.pauseDownload(taskId)
+  }
+
   private async getRandomPort(): Promise<number> {
     return 49152 + Math.floor(Math.random() * (65535 - 49152))
   }
@@ -2071,6 +2584,17 @@ export default class llamacpp_extension extends AIEngine {
       return await loadingPromise
     } finally {
       this.loadingModels.delete(modelId)
+    }
+  }
+
+  // Awaits the deferred startup, then makes one direct attempt if the router
+  // still isn't up. Idempotent: startRouter stops any existing router first.
+  private async ensureRouterReady(): Promise<void> {
+    if (this.backgroundInit) {
+      await this.backgroundInit.catch(() => undefined)
+    }
+    if (!(await this.getRouterInfo())) {
+      await this.startRouter()
     }
   }
 
@@ -2179,6 +2703,7 @@ export default class llamacpp_extension extends AIEngine {
     modelId: string,
     isEmbedding: boolean = false
   ): Promise<SessionInfo> {
+    await this.ensureRouterReady()
     const router = await this.getRouterInfo()
     if (!router) {
       throw new Error(
@@ -2649,47 +3174,61 @@ export default class llamacpp_extension extends AIEngine {
     }
   }
 
+  /**
+   * Persist a per-model setting from the sidebar into `model.yml`, regenerate
+   * the router preset, and restart the router so the next inference picks up
+   * the new args. In router mode the router reads args exclusively from
+   * `router.preset.ini`, so updating Zustand alone has no effect on inference.
+   *
+   * Sidebar keys are mapped to the canonical `model.yml` / preset keys here.
+   * Keys not in the mapping are silently ignored — they're either Jan-side
+   * concerns (`reasoning`, `auto_increase_ctx_len`) or not yet emitted by
+   * `preset.ts` (deferred to phase b).
+   */
   async updateModelSettings(
     modelId: string,
-    settings: Record<
-      string,
-      { controller_props?: { value?: unknown } | undefined } | undefined
-    >
+    patch: Record<string, string | number | boolean | null | undefined>
   ): Promise<void> {
-    const overrides: Partial<LlamacppConfig> = {}
-    const getValue = (key: string) => settings[key]?.controller_props?.value
+    const configPath = await joinPath([
+      await this.getProviderPath(),
+      'models',
+      modelId,
+      'model.yml',
+    ])
+    if (!(await fs.existsSync(configPath))) {
+      throw new Error(`model.yml not found for ${modelId}`)
+    }
+    const cfg = (await invoke<ModelConfig>('read_yaml', {
+      path: configPath,
+    })) as ModelConfig & Record<string, unknown>
 
-    if ('ctx_len' in settings) {
-      overrides.ctx_size = getValue('ctx_len') as LlamacppConfig['ctx_size']
-    }
-    if ('ngl' in settings) {
-      overrides.n_gpu_layers = getValue('ngl') as LlamacppConfig['n_gpu_layers']
-    }
-    if ('chat_template' in settings) {
-      overrides.chat_template = getValue('chat_template') as LlamacppConfig['chat_template']
-    }
-    if ('offload_mmproj' in settings) {
-      overrides.offload_mmproj = getValue('offload_mmproj') as LlamacppConfig['offload_mmproj']
-    }
-    if ('batch_size' in settings) {
-      overrides.batch_size = getValue('batch_size') as LlamacppConfig['batch_size']
-    }
-    if ('cpu_moe' in settings) {
-      overrides.cpu_moe = getValue('cpu_moe') as LlamacppConfig['cpu_moe']
-    }
-    if ('n_cpu_moe' in settings) {
-      overrides.n_cpu_moe = getValue('n_cpu_moe') as LlamacppConfig['n_cpu_moe']
-    }
-    if ('reasoning' in settings) {
-      overrides.reasoning = getValue('reasoning') as LlamacppConfig['reasoning']
+    let touched = false
+    for (const [sidebarKey, value] of Object.entries(patch)) {
+      const m = MODEL_SETTINGS_YAML_MAPPING[sidebarKey]
+      if (!m) continue
+      const next = m.coerce(value)
+      if (next === null) {
+        if (m.yamlKey in cfg) {
+          delete (cfg as Record<string, unknown>)[m.yamlKey]
+          touched = true
+        }
+      } else {
+        ;(cfg as Record<string, unknown>)[m.yamlKey] = next
+        touched = true
+      }
     }
 
-    await this.patchModelYml(modelId, overrides)
+    if (!touched) return
+
+    await invoke<void>('write_yaml', { data: cfg, savePath: configPath })
 
     try {
       await this.startRouter()
     } catch (e) {
-      logger.warn(`Failed to restart router after model settings update for ${modelId}`, e)
+      logger.warn(
+        `Failed to restart router after model settings update for ${modelId}`,
+        e
+      )
     }
   }
 

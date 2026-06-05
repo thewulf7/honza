@@ -9,6 +9,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { MessageItem } from '@/containers/MessageItem'
 
 import { useMessages } from '@/hooks/useMessages'
+import { useMessageErrors } from '@/stores/message-errors'
 import { useServiceHub } from '@/hooks/useServiceHub'
 import { useTools } from '@/hooks/useTools'
 import { useAppState } from '@/hooks/useAppState'
@@ -28,6 +29,8 @@ import { useChatSessions } from '@/stores/chat-session-store'
 import {
   convertThreadMessagesToUIMessages,
   extractContentPartsFromUIMessage,
+  uiMessageHasMeaningfulContent,
+  threadMessageIsEmpty,
 } from '@/lib/messages'
 import { newUserThreadContent } from '@/lib/completion'
 import {
@@ -45,7 +48,7 @@ import { processAttachmentsForSend } from '@/lib/attachmentProcessing'
 import { useAttachments } from '@/hooks/useAttachments'
 import { PromptProgress } from '@/components/PromptProgress'
 import { useToolAvailable } from '@/hooks/useToolAvailable'
-import { OUT_OF_CONTEXT_SIZE } from '@/utils/error'
+import { OUT_OF_CONTEXT_SIZE, isContextOverflowMessage } from '@/utils/error'
 import { Button } from '@/components/ui/button'
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react'
 import { useToolApproval } from '@/hooks/useToolApproval'
@@ -53,7 +56,6 @@ import DropdownModelProvider from '@/containers/DropdownModelProvider'
 import { ExtensionTypeEnum, VectorDBExtension } from '@janhq/core'
 import { ExtensionManager } from '@/lib/extension'
 import { Shimmer } from '@/components/ai-elements/shimmer'
-import { useAgentMode } from '@/hooks/useAgentMode'
 import { useMessageQueue } from '@/stores/message-queue-store'
 import { generateThreadTitle } from '@/lib/thread-title-summarizer'
 import { useAutoScroll } from '@/hooks/useAutoScroll'
@@ -64,6 +66,23 @@ const CHAT_STATUS = {
 } as const
 
 const TITLE_REFRESH_EVERY_N_ASSISTANT_MESSAGES = 4
+
+// Persist the out-of-context error onto the latest user message so the banner
+// survives thread switches, mirroring how LlamacppOomListener stamps oom/backend.
+function stampContextErrorOnThread(threadId: string) {
+  const messages = useMessages.getState().getMessages(threadId)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role !== 'user') continue
+    const meta = (m.metadata as Record<string, unknown> | undefined) ?? {}
+    if (meta.contextError === OUT_OF_CONTEXT_SIZE) return
+    useMessages.getState().updateMessage({
+      ...m,
+      metadata: { ...meta, contextError: OUT_OF_CONTEXT_SIZE },
+    })
+    return
+  }
+}
 
 type ThreadModel = {
   id: string
@@ -153,24 +172,34 @@ function ThreadDetail() {
   // context-limit hit, so the user sees it instead of a blank gap.
   const [pendingContinueMessage, setPendingContinueMessage] =
     useState<UIMessage | null>(null)
-  const [autoIncreaseAttempts, setAutoIncreaseAttempts] = useState(0)
-  const MAX_AUTO_INCREASE_ATTEMPTS = 3
-  const isAutoIncreasingContext =
-    autoIncreaseAttempts > 0 &&
-    autoIncreaseAttempts < MAX_AUTO_INCREASE_ATTEMPTS
   const [contextLimitError, setContextLimitError] = useState<Error | null>(null)
   const [processingEmbeddings, setProcessingEmbeddings] = useState(false)
 
   // Refs so onFinish (captured in closure) always calls the latest callbacks
-  const oomError = useAppState((s) => s.oomError)
+  const oomErrorRaw = useAppState((s) => s.oomError)
   const setOomError = useAppState((s) => s.setOomError)
-  const backendError = useAppState((s) => s.backendError)
+  const backendErrorRaw = useAppState((s) => s.backendError)
   const setBackendError = useAppState((s) => s.setBackendError)
+
+  // These signals come from the llamacpp router via global Tauri events.
+  // Mask them when the active provider isn't llamacpp so a router crash
+  // doesn't decorate chats running against MLX / OpenAI / Anthropic / etc.
+  const isLlamacppActive = selectedProvider === 'llamacpp'
+  const oomError = isLlamacppActive ? oomErrorRaw : undefined
+  const backendError = isLlamacppActive ? backendErrorRaw : undefined
 
   const handleContextSizeIncreaseRef = useRef<(() => void) | null>(null)
   const setContinueFromContentRef = useRef<((content: string) => void) | null>(
     null
   )
+  // Holds the partial assistant output captured when the model stops with
+  // `finishReason === 'length'`. Consumed by `handleContextSizeIncrease` so
+  // the manual "Increase Context Size" button resumes from where the stream
+  // stopped rather than regenerating from scratch.
+  const pendingContinuationRef = useRef<{
+    message: UIMessage
+    text: string
+  } | null>(null)
 
   // Use the AI SDK chat hook
   const {
@@ -209,23 +238,18 @@ function ThreadDetail() {
         const isContextLimit = totalTokens >= ctxLen * 0.9
 
         if (isContextLimit) {
-          const autoIncrease =
-            selectedModelState?.settings?.auto_increase_ctx_len
-              ?.controller_props?.value ?? true
-          if (autoIncrease) {
-            const partialText = message.parts
-              .filter((p) => p.type === 'text')
-              .map((p) => (p as { type: 'text'; text: string }).text)
-              .join('')
-            if (partialText) {
-              setContinueFromContentRef.current?.(partialText)
-              // Keep the partial message visible while the model reloads
-              setPendingContinueMessage(message)
-            }
-            handleContextSizeIncreaseRef.current?.()
-          } else {
-            setContextLimitError(new Error(OUT_OF_CONTEXT_SIZE))
+          // Stash the partial so the manual "Increase Context Size" button can
+          // resume from here. Surface the standard banner with the manual
+          // button — auto-increase was removed; the user explicitly opts in.
+          const partialText = message.parts
+            .filter((p) => p.type === 'text')
+            .map((p) => (p as { type: 'text'; text: string }).text)
+            .join('')
+          if (partialText) {
+            pendingContinuationRef.current = { message, text: partialText }
           }
+          stampContextErrorOnThread(threadId)
+          setContextLimitError(new Error(OUT_OF_CONTEXT_SIZE))
         }
         return
       }
@@ -235,39 +259,49 @@ function ThreadDetail() {
       // Persist assistant message to backend (skip if aborted).
       // For continuations, message.parts already contains partial + new content
       // because the stream wrapper prepended the partial text as the first delta.
-      if (!isAbort && message.role === 'assistant') {
+      if (
+        !isAbort &&
+        message.role === 'assistant' &&
+        uiMessageHasMeaningfulContent(message)
+      ) {
         const contentParts = extractContentPartsFromUIMessage(message)
+        const messageMetadata = (message.metadata || {}) as Record<
+          string,
+          unknown
+        >
 
-        if (contentParts.length > 0) {
-          const messageMetadata = (message.metadata || {}) as Record<
-            string,
-            unknown
-          >
+        const assistantMessage: ThreadMessage = {
+          type: 'text',
+          role: ChatCompletionRole.Assistant,
+          content: contentParts,
+          id: message.id,
+          object: 'thread.message',
+          thread_id: threadId,
+          status: MessageStatus.Ready,
+          created_at: Date.now(),
+          completed_at: Date.now(),
+          metadata: messageMetadata,
+        }
 
-          const assistantMessage: ThreadMessage = {
-            type: 'text',
-            role: ChatCompletionRole.Assistant,
-            content: contentParts,
-            id: message.id,
-            object: 'thread.message',
-            thread_id: threadId,
-            status: MessageStatus.Ready,
-            created_at: Date.now(),
-            completed_at: Date.now(),
-            metadata: messageMetadata,
+        const existingMessages = useMessages.getState().getMessages(threadId)
+        const existingMessage = existingMessages.find(
+          (m) => m.id === message.id
+        )
+
+        if (existingMessage) {
+          updateMessage(assistantMessage)
+        } else {
+          addMessage(assistantMessage)
+        }
+
+        for (const m of existingMessages) {
+          const meta = m.metadata as Record<string, unknown> | undefined
+          if (meta?.error) {
+            const rest = { ...meta }
+            delete rest.error
+            updateMessage({ ...m, metadata: rest })
           }
-
-          // Check if message with this ID already exists (onFinish can be called multiple times)
-          const existingMessages = useMessages.getState().getMessages(threadId)
-          const existingMessage = existingMessages.find(
-            (m) => m.id === message.id
-          )
-
-          if (existingMessage) {
-            updateMessage(assistantMessage)
-          } else {
-            addMessage(assistantMessage)
-          }
+          useMessageErrors.getState().clearError(m.id)
         }
       }
 
@@ -558,15 +592,41 @@ function ThreadDetail() {
             }
           }
 
-          // Update the legacy store
+          // Drop and delete any persisted empty assistant rows produced by
+          // the old bug where errored generations were written as empty-text
+          // messages. Lossless cleanup — these carry no information.
+          const emptyAssistantIds = messagesToSet
+            .filter(threadMessageIsEmpty)
+            .map((m) => m.id)
+          if (emptyAssistantIds.length > 0) {
+            messagesToSet = messagesToSet.filter(
+              (m) => !emptyAssistantIds.includes(m.id)
+            )
+            for (const id of emptyAssistantIds) {
+              deleteMessage(threadId, id)
+            }
+          }
+
           setMessages(threadId, messagesToSet)
 
-          // Convert and set messages for AI SDK chat
+          const hydrated: Record<string, string> = {}
+          for (const m of messagesToSet) {
+            const err = (m.metadata as Record<string, unknown> | undefined)
+              ?.error
+            if (typeof err === 'string' && err.length > 0) {
+              hydrated[m.id] = err
+            }
+          }
+          useMessageErrors.getState().hydrate(hydrated)
+
           const uiMessages = convertThreadMessagesToUIMessages(messagesToSet)
           setChatMessages(uiMessages)
           currentThread.current = threadId
         }
       })
+      .catch((error) =>
+        console.error('Failed to fetch messages for thread:', threadId, error)
+      )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId, serviceHub])
 
@@ -577,6 +637,28 @@ function ThreadDetail() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Resync the OOM/backend banner from message metadata on every thread switch.
+  // Persisted by LlamacppOomListener at error time; unset state when this
+  // thread carries no such metadata so the banner doesn't leak across threads.
+  const threadMessagesForBanner = useMessages((s) => s.messages?.[threadId])
+  useEffect(() => {
+    let oom: string | undefined
+    let be: string | undefined
+    let ctx: string | undefined
+    for (const m of threadMessagesForBanner ?? []) {
+      const meta = m.metadata as Record<string, unknown> | undefined
+      const o = meta?.oomError
+      if (typeof o === 'string' && o.length > 0) oom = o
+      const b = meta?.backendError
+      if (typeof b === 'string' && b.length > 0) be = b
+      const c = meta?.contextError
+      if (typeof c === 'string' && c.length > 0) ctx = c
+    }
+    useAppState.getState().setOomError(oom)
+    useAppState.getState().setBackendError(be)
+    setContextLimitError(ctx ? new Error(ctx) : null)
+  }, [threadId, threadMessagesForBanner])
 
   // Consolidated function to process and send a message
   const processAndSendMessage = useCallback(
@@ -790,6 +872,25 @@ function ThreadDetail() {
     }
   }, [threadId, processAndSendMessage])
 
+  const stripBannerMetadata = useCallback(() => {
+    const tmsgs = useMessages.getState().getMessages(threadId)
+    for (const m of tmsgs) {
+      const meta = m.metadata as Record<string, unknown> | undefined
+      if (!meta) continue
+      if (
+        meta.oomError == null &&
+        meta.backendError == null &&
+        meta.contextError == null
+      )
+        continue
+      const nextMeta = { ...meta }
+      delete nextMeta.oomError
+      delete nextMeta.backendError
+      delete nextMeta.contextError
+      updateMessage({ ...m, metadata: nextMeta })
+    }
+  }, [threadId, updateMessage])
+
   // Handle submit from ChatInput
   const handleSubmit = useCallback(
     async (
@@ -798,21 +899,37 @@ function ThreadDetail() {
     ) => {
       if (oomError) setOomError(undefined)
       if (backendError) setBackendError(undefined)
+      if (contextLimitError) setContextLimitError(null)
+      if (oomError || backendError || contextLimitError) stripBannerMetadata()
       await processAndSendMessage(text, files)
     },
-    [processAndSendMessage, oomError, setOomError, backendError, setBackendError]
+    [
+      processAndSendMessage,
+      oomError,
+      setOomError,
+      backendError,
+      setBackendError,
+      contextLimitError,
+      stripBannerMetadata,
+    ]
   )
 
   // Handle regenerate from any message (user or assistant)
   // - For user messages: keeps the user message, deletes all after, regenerates assistant response
   // - For assistant messages: finds the closest preceding user message, deletes from there
   const handleRegenerate = useCallback((messageId?: string) => {
+    const hadBannerError =
+      useAppState.getState().oomError != null ||
+      useAppState.getState().backendError != null ||
+      contextLimitError != null
     if (useAppState.getState().oomError) {
       useAppState.getState().setOomError(undefined)
     }
     if (useAppState.getState().backendError) {
       useAppState.getState().setBackendError(undefined)
     }
+    if (contextLimitError) setContextLimitError(null)
+    if (hadBannerError) stripBannerMetadata()
     // Cancel any in-flight title summarization before regenerating
     titleAbortRef.current?.abort()
     titleAbortRef.current = null
@@ -856,7 +973,7 @@ function ThreadDetail() {
     // Call the AI SDK regenerate function - it will handle truncating the UI messages
     // and generating a new response from the selected message
     regenerate(messageId ? { messageId } : undefined)
-  }, [threadId, deleteMessage, regenerate])
+  }, [threadId, deleteMessage, regenerate, stripBannerMetadata, contextLimitError])
 
   // Handle edit message - updates the message and regenerates from it
   const handleEditMessage = useCallback(
@@ -870,7 +987,12 @@ function ThreadDetail() {
 
       const originalMessage = currentLocalMessages[messageIndex]
 
-      // Update the message content
+      const priorMeta = (originalMessage.metadata || {}) as Record<
+        string,
+        unknown
+      >
+      const cleanedMeta = { ...priorMeta }
+      delete cleanedMeta.error
       const updatedMessage = {
         ...originalMessage,
         content: [
@@ -879,8 +1001,10 @@ function ThreadDetail() {
             text: { value: newText, annotations: [] },
           },
         ],
+        metadata: cleanedMeta,
       }
       updateMessage(updatedMessage)
+      useMessageErrors.getState().clearError(messageId)
 
       // Update chat messages for UI
       const updatedChatMessages = chatMessages.map((msg) => {
@@ -920,6 +1044,7 @@ function ThreadDetail() {
   const handleDeleteMessage = useCallback(
     (messageId: string) => {
       deleteMessage(threadId, messageId)
+      useMessageErrors.getState().clearError(messageId)
 
       // Update chat messages for UI
       const updatedChatMessages = chatMessages.filter(
@@ -962,6 +1087,7 @@ function ThreadDetail() {
 
     newCtxLen = Math.min(newCtxLen, maxCtxLen)
     if (newCtxLen <= currentCtxLen) {
+      stampContextErrorOnThread(threadId)
       setContextLimitError(new Error(OUT_OF_CONTEXT_SIZE))
       return
     }
@@ -987,7 +1113,37 @@ function ThreadDetail() {
       models: updatedModels,
     })
 
-    await serviceHub.models().stopModel(selectedModel.id)
+    // For llamacpp the router reads ctx-size from the preset, not from any
+    // request param — so we must write model.yml and bounce the router before
+    // the regenerate, otherwise the next load picks up the OLD context size.
+    // Other providers consume the new Zustand value directly on next load.
+    if (provider.provider === 'llamacpp') {
+      try {
+        await serviceHub
+          .models()
+          .updateModelSettings(selectedModel.id, { ctx_len: newCtxLen })
+      } catch (e) {
+        updateProvider(provider.provider, {
+          models: provider.models,
+        })
+        console.error('Failed to persist increased ctx_len', e)
+        stampContextErrorOnThread(threadId)
+        setContextLimitError(new Error(OUT_OF_CONTEXT_SIZE))
+        return
+      }
+    } else {
+      await serviceHub.models().stopModel(selectedModel.id)
+    }
+
+    // Consume any pending partial captured at the `finishReason === 'length'`
+    // event so the regenerate resumes from where the stream stopped, and the
+    // "Growing the Mind…" shimmer renders while the model reloads.
+    const pending = pendingContinuationRef.current
+    pendingContinuationRef.current = null
+    if (pending) {
+      setContinueFromContentRef.current?.(pending.text)
+      setPendingContinueMessage(pending.message)
+    }
 
     setTimeout(() => {
       handleRegenerate()
@@ -998,49 +1154,31 @@ function ThreadDetail() {
     getProviderByName,
     serviceHub,
     handleRegenerate,
+    threadId,
   ])
 
   // Keep refs in sync so onFinish always calls the latest versions
   handleContextSizeIncreaseRef.current = handleContextSizeIncrease
   setContinueFromContentRef.current = setContinueFromContent
 
-  // Skip auto-context-increase in agent mode
-  const agentModeActive = useAgentMode((s) => s.agentThreads[threadId] === true)
   useEffect(() => {
-    if (!error || agentModeActive) return
-    if (autoIncreaseAttempts >= MAX_AUTO_INCREASE_ATTEMPTS) return
-    const autoIncrease =
-      selectedModel?.settings?.auto_increase_ctx_len?.controller_props?.value ??
-      true
-    if (!autoIncrease) return
-    const isContextError =
-      (error.message?.toLowerCase().includes('context') &&
-        (error.message?.toLowerCase().includes('size') ||
-          error.message?.toLowerCase().includes('length') ||
-          error.message?.toLowerCase().includes('limit'))) ||
-      error.message === OUT_OF_CONTEXT_SIZE
-    if (isContextError) {
-      setAutoIncreaseAttempts((prev) => prev + 1)
-      handleContextSizeIncrease()
-    }
-  }, [error]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if ((oomError || backendError) && (status === 'streaming' || status === 'submitted')) {
+    if (
+      (oomError || backendError || contextLimitError) &&
+      (status === 'streaming' || status === 'submitted')
+    ) {
       try {
         stop()
       } catch (e) {
         console.warn('router error stop() threw:', e)
       }
     }
-  }, [oomError, backendError, status, stop])
+  }, [oomError, backendError, contextLimitError, status, stop])
 
   useEffect(() => {
-    if (status === 'streaming' || status === 'submitted') {
-      setContextLimitError(null)
-    }
-    if (status === 'streaming' && autoIncreaseAttempts > 0) {
-      setAutoIncreaseAttempts(0)
+    if (status === 'streaming' && pendingContinuationRef.current) {
+      // The new turn is now flowing; drop the saved partial so it can't be
+      // consumed by a later, unrelated "Increase Context Size" click.
+      pendingContinuationRef.current = null
     }
     if (status === 'error' && pendingContinueMessage) {
       setPendingContinueMessage(null)
@@ -1075,6 +1213,75 @@ function ThreadDetail() {
       useMessageQueue.getState().clearQueue(threadId)
     }
   }, [status, threadId])
+
+  // Attach the error to the assistant turn it belongs to so the banner renders
+  // alongside any tool-call parts the model already produced. Falls back to the
+  // last user message if no assistant message exists yet (e.g. provider 4xx
+  // before streaming starts).
+  useEffect(() => {
+    if (!error) return
+    let targetId: string | undefined
+    let lastUserIdx = -1
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i].role === 'user') {
+        lastUserIdx = i
+        break
+      }
+    }
+    for (let i = chatMessages.length - 1; i > lastUserIdx; i--) {
+      if (chatMessages[i].role === 'assistant') {
+        targetId = chatMessages[i].id
+        break
+      }
+    }
+    if (!targetId && lastUserIdx >= 0) {
+      targetId = chatMessages[lastUserIdx].id
+    }
+    if (!targetId) return
+    const errMessage =
+      error instanceof Error ? error.message : String(error || 'Error')
+    // Context overflow is owned by the global "Increase Context Size" banner;
+    // a per-message Regenerate would just re-overflow the same prompt.
+    if (isContextOverflowMessage(errMessage)) {
+      stampContextErrorOnThread(threadId)
+      setContextLimitError(new Error(OUT_OF_CONTEXT_SIZE))
+      useMessageErrors.getState().clearError(targetId)
+      return
+    }
+    useMessageErrors.getState().setError(targetId, errMessage)
+    const tm = useMessages.getState().getMessages(threadId).find(
+      (m) => m.id === targetId
+    )
+    if (tm) {
+      const existingError = (tm.metadata as Record<string, unknown> | undefined)
+        ?.error
+      if (existingError !== errMessage) {
+        updateMessage({
+          ...tm,
+          metadata: { ...(tm.metadata || {}), error: errMessage },
+        })
+      }
+    }
+  }, [status, error, threadId, chatMessages, updateMessage])
+
+  // Persist whenever the user message lands in useMessages — covers the race
+  // where the stamping effect ran before addMessage's commit was observable.
+  const localThreadMessages = useMessages((s) => s.messages?.[threadId])
+  const errorEntries = useMessageErrors((s) => s.errors)
+  useEffect(() => {
+    if (!localThreadMessages) return
+    for (const m of localThreadMessages) {
+      const err = errorEntries[m.id]
+      if (typeof err !== 'string' || !err) continue
+      const existing = (m.metadata as Record<string, unknown> | undefined)
+        ?.error
+      if (existing === err) continue
+      updateMessage({
+        ...m,
+        metadata: { ...(m.metadata || {}), error: err },
+      })
+    }
+  }, [localThreadMessages, errorEntries, updateMessage])
 
   // Clear the queue when navigating away from this thread
   useEffect(() => {
@@ -1147,18 +1354,20 @@ function ThreadDetail() {
                   <Shimmer duration={1}>Processing embeddings...</Shimmer>
                 </div>
               )}
-              {!oomError && !backendError && (status === CHAT_STATUS.SUBMITTED ||
-                isAutoIncreasingContext) && (
+              {!oomError &&
+                !backendError &&
+                !contextLimitError &&
+                status === CHAT_STATUS.SUBMITTED && (
                 <div className="flex flex-row items-center gap-2">
-                  {(pendingContinueMessage || isAutoIncreasingContext) && (
+                  {pendingContinueMessage && (
                     <Shimmer duration={1}>Growing the Mind...</Shimmer>
                   )}
-                  {status === CHAT_STATUS.SUBMITTED && !lastIsAssistant && (
+                  {!pendingContinueMessage && !lastIsAssistant && (
                     <PromptProgress />
                   )}
                 </div>
               )}
-              {(error || contextLimitError || oomError || backendError) && !isAutoIncreasingContext && (
+              {(contextLimitError || oomError || backendError) && (
                 <div className="px-4 py-3 mx-4 my-2 rounded-lg border border-destructive/10 bg-destructive/10">
                   <div className="flex items-start gap-3">
                     <IconAlertCircle className="size-5 text-destructive shrink-0 mt-0.5" />
@@ -1168,7 +1377,7 @@ function ThreadDetail() {
                           ? 'llama.cpp ran out of memory'
                           : backendError
                             ? 'GGML backend encountered an error'
-                            : 'Error generating response'}
+                            : 'Model ran out of context size'}
                       </p>
                       <div className="table table-fixed w-full">
                         <span
@@ -1180,7 +1389,7 @@ function ThreadDetail() {
                           }
                           style={{ wordWrap: 'break-word' }}
                         >
-                          {oomError ?? backendError ?? (error ?? contextLimitError)?.message}
+                          {oomError ?? backendError ?? contextLimitError?.message}
                         </span>
                       </div>
                       {oomError && (
@@ -1240,7 +1449,9 @@ function ThreadDetail() {
             model={threadModel}
             onSubmit={handleSubmit}
             onStop={stop}
-            chatStatus={oomError || backendError ? 'ready' : status}
+            chatStatus={
+              oomError || backendError || contextLimitError ? 'ready' : status
+            }
           />
         </div>
       </div>

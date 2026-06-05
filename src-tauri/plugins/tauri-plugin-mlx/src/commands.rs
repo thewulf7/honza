@@ -83,6 +83,7 @@ pub struct MlxConfig {
 /// Core model-loading logic, decoupled from Tauri AppHandle.
 /// `binary_path` must point to the mlx-server executable.
 /// `process_map_arc` is the shared session map from MlxState.
+#[allow(clippy::too_many_arguments)]
 pub async fn load_mlx_model_impl(
     process_map_arc: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
     binary_path: &Path,
@@ -266,7 +267,10 @@ pub async fn load_mlx_model_impl(
     // Check if process exited early
     if let Some(status) = child.try_wait()? {
         if !status.success() {
-            let stderr_output = stderr_task.await.unwrap_or_default();
+            let stderr_output = stderr_task.await.unwrap_or_else(|e| {
+                        log::warn!("MLX stderr task join failed: {e}");
+                        String::new()
+                    });
             log::error!("MLX server failed early with code {:?}", status);
             log::error!("{}", stderr_output);
             return Err(MlxError::from_stderr(&stderr_output).into());
@@ -286,7 +290,10 @@ pub async fn load_mlx_model_impl(
             }
             _ = tokio::time::sleep(Duration::from_millis(50)) => {
                 if let Some(status) = child.try_wait()? {
-                    let stderr_output = stderr_task.await.unwrap_or_default();
+                    let stderr_output = stderr_task.await.unwrap_or_else(|e| {
+                        log::warn!("MLX stderr task join failed: {e}");
+                        String::new()
+                    });
                     if !status.success() {
                         log::error!("MLX server exited with error code {:?}", status);
                         return Err(MlxError::from_stderr(&stderr_output).into());
@@ -299,7 +306,10 @@ pub async fn load_mlx_model_impl(
                 if start_time.elapsed() > timeout_duration {
                     log::error!("Timeout waiting for MLX server to be ready");
                     let _ = child.kill().await;
-                    let stderr_output = stderr_task.await.unwrap_or_default();
+                    let stderr_output = stderr_task.await.unwrap_or_else(|e| {
+                        log::warn!("MLX stderr task join failed: {e}");
+                        String::new()
+                    });
                     return Err(MlxError::new(
                         ErrorCode::ModelLoadTimedOut,
                         "The MLX model took too long to load and timed out.".into(),
@@ -390,6 +400,7 @@ pub async fn get_mlx_resolved_binary_path<R: Runtime>(
 
 /// Load a model using the MLX server binary (Tauri command wrapper)
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn load_mlx_model<R: Runtime>(
     app_handle: tauri::AppHandle<R>,
     model_id: String,

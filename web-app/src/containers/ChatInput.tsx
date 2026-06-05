@@ -15,9 +15,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ArrowRight, PlusIcon } from 'lucide-react'
 import {
@@ -41,6 +38,7 @@ import {
 import { generateId } from 'ai'
 import { useMessageQueue } from '@/stores/message-queue-store'
 import { QueuedMessageChip } from '@/containers/QueuedMessageBubble'
+import { SamplerPopover } from '@/containers/SamplerPopover'
 import { BotIcon, ChevronsUpDown } from 'lucide-react'
 import { useCodexSettings } from '@/hooks/useCodexSettings'
 import { useClaudeCodeModel } from '@/hooks/useClaudeCodeModel'
@@ -62,7 +60,6 @@ import {
 import { defaultModel } from '@/lib/models'
 import { useAssistant } from '@/hooks/useAssistant'
 import DropdownToolsAvailable from '@/containers/DropdownToolsAvailable'
-import { AvatarEmoji } from '@/containers/AvatarEmoji'
 import { useServiceHub } from '@/hooks/useServiceHub'
 import { useTools } from '@/hooks/useTools'
 import { TokenCounter } from '@/components/TokenCounter'
@@ -342,6 +339,9 @@ const ChatInput = memo(function ChatInput({
     (a) => a.type === 'document' && a.processing
   )
   const ingestingAny = attachments.some((a) => a.processing)
+  const hasSendableMedia = attachments.some(
+    (a) => (a.type === 'image' || a.type === 'audio') && !!a.dataUrl
+  )
 
   const [, setFileIngestProgress] = useState<{
     completed: number
@@ -408,7 +408,7 @@ const ChatInput = memo(function ChatInput({
       setMessage('Please select a model to start chatting.')
       return
     }
-    if (!prompt.trim()) {
+    if (!prompt.trim() && !hasSendableMedia) {
       return
     }
     if (ingestingAny) {
@@ -432,8 +432,6 @@ const ChatInput = memo(function ChatInput({
         return
       }
 
-      const assistant = currentThread?.assistants?.[0]
-      setCurrentAssistant(assistant)
       const imageFiles = attachments
         .filter((att) => att.type === 'image' && att.dataUrl)
         .map((att) => ({
@@ -1906,7 +1904,7 @@ const ChatInput = memo(function ChatInput({
                   e.preventDefault()
                   // Submit prompt when Enter is pressed without Shift and prompt is not empty.
                   // If streaming, handleSendMessage will queue the message automatically.
-                  if (prompt.trim() && !ingestingAny) {
+                  if ((prompt.trim() || hasSendableMedia) && !ingestingAny) {
                     handleSendMessage(prompt)
                   }
                   // When Shift+Enter is pressed, a new line is added (default behavior)
@@ -2108,7 +2106,22 @@ const ChatInput = memo(function ChatInput({
                     useLastUsedModel={initialMessage}
                   />
                 )} */}
-                {hasJanBrowserMCPConfig && modelSupportsBrowser && (
+                <SamplerPopover
+                  providerId={selectedProvider}
+                  modelId={selectedModel?.id}
+                  assistantSwitcher={
+                    !projectId
+                      ? {
+                          assistants,
+                          currentThread,
+                          selectedAssistantId,
+                          setSelectedAssistantId,
+                          updateCurrentThreadAssistant,
+                        }
+                      : undefined
+                  }
+                />
+                {!effectiveAgentMode && hasJanBrowserMCPConfig && modelSupportsBrowser && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -2397,8 +2410,8 @@ const ChatInput = memo(function ChatInput({
                             <DropdownMenuTrigger asChild>
                               <Button
                                 variant="ghost"
-                                size="sm"
-                                className="h-7 gap-1 px-1.5"
+                                size="icon-xs"
+                                aria-label={`Reasoning: ${label}`}
                               >
                                 <IconBrain
                                   size={18}
@@ -2408,9 +2421,6 @@ const ChatInput = memo(function ChatInput({
                                     reasoningValue === 'off' && 'opacity-50'
                                   )}
                                 />
-                                <span className="text-xs text-muted-foreground lowercase">
-                                  {label}
-                                </span>
                               </Button>
                             </DropdownMenuTrigger>
                           </TooltipTrigger>
@@ -2491,7 +2501,7 @@ const ChatInput = memo(function ChatInput({
                 <Button
                   variant="default"
                   size="icon-sm"
-                  disabled={!prompt.trim() || ingestingAny}
+                  disabled={(!prompt.trim() && !hasSendableMedia) || ingestingAny}
                   data-test-id="send-message-button"
                   onClick={() => handleSendMessage(prompt)}
                   className="rounded-full mr-1 mb-1"

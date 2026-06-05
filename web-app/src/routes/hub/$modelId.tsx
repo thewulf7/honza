@@ -79,8 +79,12 @@ function HubModelDetailContent() {
   const search = useSearch({ from: Route.id as any })
   const { getProviderByName } = useModelProvider()
   const llamaProvider = getProviderByName('llamacpp')
-  const { downloads, localDownloadingModels, addLocalDownloadingModel } =
-    useDownloadStore()
+  const {
+    downloads,
+    localDownloadingModels,
+    addLocalDownloadingModel,
+    setResumeParams,
+  } = useDownloadStore()
   const serviceHub = useServiceHub()
   const [repoData, setRepoData] = useState<CatalogModel | undefined>()
   const { modelScore, fetchModelScore } = useModelScore(
@@ -586,18 +590,24 @@ function HubModelDetailContent() {
                                       addLocalDownloadingModel(
                                         variant.model_id
                                       )
+                                      const mmprojPath = (
+                                        modelData.mmproj_models?.find(
+                                          (e) =>
+                                            e.model_id.toLowerCase() ===
+                                            'mmproj-f16'
+                                        ) || modelData.mmproj_models?.[0]
+                                      )?.path
+                                      setResumeParams(variant.model_id, {
+                                        modelPath: variant.path,
+                                        mmprojPath,
+                                        hfToken: huggingfaceToken,
+                                      })
                                       serviceHub
                                         .models()
                                         .pullModelWithMetadata(
                                           variant.model_id,
                                           variant.path,
-                                          (
-                                            modelData.mmproj_models?.find(
-                                              (e) =>
-                                                e.model_id.toLowerCase() ===
-                                                'mmproj-f16'
-                                            ) || modelData.mmproj_models?.[0]
-                                          )?.path,
+                                          mmprojPath,
                                           huggingfaceToken
                                         )
                                     }}

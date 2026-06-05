@@ -3,6 +3,7 @@ import {
   ModelFactory,
   cleanUpstreamErrorMessage,
   createCustomFetch,
+  describeTransportError,
 } from '../model-factory'
 import type { ProviderObject } from '@janhq/core'
 import { invoke } from '@tauri-apps/api/core'
@@ -91,6 +92,30 @@ describe('ModelFactory', () => {
       const model = await ModelFactory.createModel('claude-3-opus', provider)
       expect(model).toBeDefined()
       expect(model.type).toBe('anthropic')
+    })
+
+    it('routes a custom provider with api_type="anthropic" through the Anthropic SDK', async () => {
+      const { createAnthropic } = await import('@ai-sdk/anthropic')
+      vi.mocked(createAnthropic).mockClear()
+      const provider: ProviderObject = {
+        provider: 'my-claude-proxy',
+        api_type: 'anthropic',
+        api_key: 'sk-proxy',
+        base_url: 'https://proxy.example.com/v1',
+        models: [],
+        settings: [],
+        active: true,
+      }
+
+      const model = await ModelFactory.createModel('claude-3-haiku', provider)
+      expect(model).toBeDefined()
+      expect(model.type).toBe('anthropic')
+      expect(createAnthropic).toHaveBeenCalledWith(
+        expect.objectContaining({
+          apiKey: 'sk-proxy',
+          baseURL: 'https://proxy.example.com/v1',
+        })
+      )
     })
 
     it('routes google and gemini through the native @ai-sdk/google client and strips the /openai suffix', async () => {
@@ -209,6 +234,54 @@ describe('cleanUpstreamErrorMessage', () => {
   })
 })
 
+describe('describeTransportError', () => {
+  it('maps reqwest "error sending request" to a connection message', () => {
+    const msg = describeTransportError(
+      new Error('error sending request for url (https://x/v1/chat/completions)')
+    )
+    expect(msg).toMatch(/connection failed|couldn't reach/i)
+  })
+
+  it('maps DNS failures to an address-resolution message', () => {
+    const msg = describeTransportError(new Error('dns error: failed to lookup address'))
+    expect(msg).toMatch(/could not be resolved/i)
+  })
+
+  it('maps timeouts to a timeout message', () => {
+    expect(describeTransportError(new Error('operation timed out'))).toMatch(/timed out/i)
+  })
+
+  it('maps TLS errors to a secure-connection message', () => {
+    expect(describeTransportError(new Error('invalid certificate'))).toMatch(/secure connection/i)
+  })
+
+  it('returns null for non-transport errors (HTTP/app errors)', () => {
+    expect(describeTransportError(new Error('400 Bad Request: invalid model'))).toBeNull()
+  })
+})
+
+describe('createCustomFetch — transport error wrapping', () => {
+  it('rethrows transport failures with a friendly message and the url', async () => {
+    const baseFetch: typeof globalThis.fetch = (async () => {
+      throw new Error('error sending request for url (https://up/v1/chat/completions)')
+    }) as typeof globalThis.fetch
+    const wrapped = createCustomFetch(baseFetch, {}, true)
+    await expect(
+      wrapped('https://up/v1/chat/completions', { method: 'POST', body: '{}' })
+    ).rejects.toThrow(/couldn't reach the provider.*https:\/\/up/i)
+  })
+
+  it('rethrows non-transport errors unchanged', async () => {
+    const baseFetch: typeof globalThis.fetch = (async () => {
+      throw new Error('boom unexpected')
+    }) as typeof globalThis.fetch
+    const wrapped = createCustomFetch(baseFetch, {}, true)
+    await expect(
+      wrapped('https://up/v1/chat/completions', { method: 'POST', body: '{}' })
+    ).rejects.toThrow('boom unexpected')
+  })
+})
+
 describe('createCustomFetch — max_tokens coercion', () => {
   async function captureSentBody(
     parameters: Record<string, unknown>,
@@ -291,17 +364,17 @@ describe('createCustomFetch — llamacpp 500 handling', () => {
     expect(onErr).toHaveBeenCalledTimes(1)
   })
 
-  it('triggers the reload callback on llamacpp 500 even when the body parses', async () => {
+  it('does not trigger reload on llamacpp 500 carrying a JSON error body (child alive, not a crash)', async () => {
     const onErr = vi.fn()
     const body = JSON.stringify({
-      error: { code: 500, message: 'some inner crash', type: 'server_error' },
+      error: { code: 500, message: 'some inner error', type: 'server_error' },
     })
     const wrapped = createCustomFetch(fetchReturning(500, body), {}, true, onErr)
     await wrapped('http://test/v1/chat/completions', {
       method: 'POST',
       body: '{}',
     })
-    expect(onErr).toHaveBeenCalledTimes(1)
+    expect(onErr).not.toHaveBeenCalled()
   })
 
   it('does not trigger the reload callback or synthesize a body for non-llamacpp 500', async () => {

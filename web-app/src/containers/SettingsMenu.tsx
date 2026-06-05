@@ -14,6 +14,8 @@ import {
   IconTopologyStar3,
   IconLock,
   IconCpu,
+  IconWorld,
+  IconPaperclip,
 } from '@tabler/icons-react'
 import { useMatches, useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
@@ -23,7 +25,10 @@ import { BUILT_IN_AGENTS, renderAgentTypeIcon } from '@/containers/agents/agentD
 import { getProviderTitle, isLocalProvider } from '@/lib/utils'
 import ProvidersAvatar from '@/containers/ProvidersAvatar'
 import { AddProviderDialog } from '@/containers/dialogs'
-import { openAIProviderSettings } from '@/constants/providers'
+import {
+  openAIProviderSettings,
+  anthropicProviderSettings,
+} from '@/constants/providers'
 import cloneDeep from 'lodash/cloneDeep'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -37,14 +42,23 @@ const SettingsMenu = () => {
   const { providers, addProvider } = useModelProvider()
 
   const createProvider = useCallback(
-    (name: string, baseUrl: string, apiKey: string) => {
+    (
+      name: string,
+      baseUrl: string,
+      apiKey: string,
+      apiType: ProviderApiType
+    ) => {
       if (
         providers.some((e) => e.provider.toLowerCase() === name.toLowerCase())
       ) {
         toast.error(t('provider:providerAlreadyExists', { name }))
         return
       }
-      const settings = cloneDeep(openAIProviderSettings) as ProviderSetting[]
+      const template =
+        apiType === 'anthropic'
+          ? anthropicProviderSettings
+          : openAIProviderSettings
+      const settings = cloneDeep(template) as ProviderSetting[]
       for (const s of settings) {
         if (s.key === 'base-url') {
           (s.controller_props as { value: string }).value = baseUrl
@@ -59,6 +73,7 @@ const SettingsMenu = () => {
         settings,
         api_key: apiKey,
         base_url: baseUrl,
+        ...(apiType === 'anthropic' ? { api_type: 'anthropic' as const } : {}),
       }
       addProvider(newProvider)
       setTimeout(() => {
@@ -163,9 +178,19 @@ const SettingsMenu = () => {
     },
     { title: 'common:assistants', route: route.settings.assistant, icon: IconFeather },
     {
+      title: 'common:attachments',
+      route: route.settings.attachments,
+      icon: IconPaperclip,
+    },
+    {
       title: 'common:local_api_server',
       route: route.settings.local_api_server,
       icon: IconCircles,
+    },
+    {
+      title: 'common:https_proxy',
+      route: route.settings.https_proxy,
+      icon: IconWorld,
     },
     {
       title: 'common:keyboardShortcuts',
@@ -184,7 +209,7 @@ const SettingsMenu = () => {
 
   const integrationSettings = [
     {
-      title: 'common:connectors',
+      title: 'common:mcp-servers',
       route: route.settings.mcp_servers,
       icon: IconTopologyStar3,
     },
