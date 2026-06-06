@@ -1,7 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { route } from '@/constants/routes'
-import SettingsMenu from '@/containers/SettingsMenu'
-import HeaderPage from '@/containers/HeaderPage'
 import { Card, CardItem } from '@/containers/Card'
 import { Switch } from '@/components/ui/switch'
 import { Progress } from '@/components/ui/progress'
@@ -12,11 +10,12 @@ import { useEffect, useState } from 'react'
 import { IconDeviceDesktopAnalytics } from '@tabler/icons-react'
 import { useServiceHub } from '@/hooks/useServiceHub'
 import type { HardwareData, SystemUsage } from '@/services/hardware/types'
-import { cn, formatMegaBytes } from '@/lib/utils'
+import { formatMegaBytes } from '@/lib/utils'
 import { toNumber } from '@/utils/number'
 import { useModelProvider } from '@/hooks/useModelProvider'
 import { useAppState } from '@/hooks/useAppState'
 import { Button } from '@/components/ui/button'
+import SettingsIntegrationPage from '@/containers/SettingsIntegrationPage'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const Route = createFileRoute(route.settings.hardware as any)({
@@ -137,32 +136,27 @@ function HardwareContent() {
   }
 
   return (
-    <div className="flex flex-col h-svh w-full">
-      <HeaderPage>
-        <div className={cn("flex items-center justify-between w-full mr-2 pr-3", !IS_MACOS && "pr-30")}>
-          <span className='font-medium text-base font-studio'>{t('common:settings')}</span>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex items-center gap-2 relative z-50"
-            onClick={handleClickSystemMonitor}
-          >
-            <IconDeviceDesktopAnalytics className="text-muted-foreground size-5" />
-            <p>{t('settings:hardware.systemMonitor')}</p>
-          </Button>
+    <SettingsIntegrationPage
+      headerActions={
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex items-center gap-2 relative z-50"
+          onClick={handleClickSystemMonitor}
+        >
+          <IconDeviceDesktopAnalytics className="text-muted-foreground size-5" />
+          <p>{t('settings:hardware.systemMonitor')}</p>
+        </Button>
+      }
+    >
+      {isLoading ? (
+        <div className="flex items-center justify-center h-32">
+          <div className="text-muted-foreground">
+            Loading hardware information...
+          </div>
         </div>
-      </HeaderPage>
-      <div className="flex h-[calc(100%-60px)]">
-        <SettingsMenu />
-        <div className="p-4 pt-0 w-full overflow-y-auto">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-32">
-              <div className="text-muted-foreground">
-                Loading hardware information...
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col justify-between gap-4 gap-y-3 w-full">
+      ) : (
+        <>
               {/* OS Information */}
               <Card title={t('settings:hardware.os')}>
                 <CardItem
@@ -372,10 +366,8 @@ function HardwareContent() {
                   )}
                 </Card>
               )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </SettingsIntegrationPage>
   )
 }

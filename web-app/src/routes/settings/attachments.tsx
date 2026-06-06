@@ -1,6 +1,4 @@
 import { createFileRoute } from '@tanstack/react-router'
-import SettingsMenu from '@/containers/SettingsMenu'
-import HeaderPage from '@/containers/HeaderPage'
 import { Card, CardItem } from '@/containers/Card'
 import { useAttachments } from '@/hooks/useAttachments'
 import type { SettingComponentProps } from '@janhq/core'
@@ -8,6 +6,7 @@ import { useTranslation } from '@/i18n/react-i18next-compat'
 import { DynamicControllerSetting } from '@/containers/dynamicControllerSetting'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
+import SettingsIntegrationPage from '@/containers/SettingsIntegrationPage'
 
 export const Route = createFileRoute('/settings/attachments')({
   component: AttachmentsSettings,
@@ -176,17 +175,8 @@ function AttachmentsSettings() {
   )
 
   return (
-    <div className="flex flex-col h-svh w-full">
-      <HeaderPage>
-        <div className="flex items-center gap-2 w-full">
-          <span className='font-medium text-base font-studio'>{t('common:settings')}</span>
-        </div>
-      </HeaderPage>
-      <div className="flex h-[calc(100%-60px)]">
-        <SettingsMenu />
-        <div className="p-4 pt-0 w-full overflow-y-auto">
-          <div className="flex flex-col justify-between gap-4 gap-y-3 w-full">
-            <Card title={t('common:attachments') || 'Attachments'}>
+    <SettingsIntegrationPage>
+      <Card title={t('common:attachments') || 'Attachments'}>
               {defs.map((d) => {
                 // Use local value if typing, else use store value
                 const storeValue = (() => {
@@ -271,10 +261,7 @@ function AttachmentsSettings() {
                   />
                 )
               })}
-            </Card>
-          </div>
-        </div>
-      </div>
-    </div>
+      </Card>
+    </SettingsIntegrationPage>
   )
 }

@@ -1,8 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { invoke } from '@tauri-apps/api/core'
 import { route } from '@/constants/routes'
-import SettingsMenu from '@/containers/SettingsMenu'
-import HeaderPage from '@/containers/HeaderPage'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Card, CardItem } from '@/containers/Card'
@@ -14,6 +12,7 @@ import ChangeDataFolderLocation from '@/containers/dialogs/ChangeDataFolderLocat
 import { FactoryResetDialog } from '@/containers/dialogs'
 import type { FactoryResetOptions } from '@/services/app/types'
 import { useServiceHub } from '@/hooks/useServiceHub'
+import SettingsIntegrationPage from '@/containers/SettingsIntegrationPage'
 import {
   IconBrandDiscord,
   IconBrandGithub,
@@ -209,16 +208,7 @@ function General() {
   }, [t, checkForUpdate])
 
   return (
-    <div className="flex flex-col h-svh w-full">
-      <HeaderPage>
-        <div className="flex items-center gap-2 w-full">
-          <span className='font-medium text-base font-studio'>{t('common:settings')}</span>
-        </div>
-      </HeaderPage>
-      <div className="flex h-[calc(100%-60px)]">
-        <SettingsMenu />
-        <div className="p-4 pt-0 w-full overflow-y-auto">
-          <div className="flex flex-col justify-between gap-4 gap-y-3 w-full">
+    <SettingsIntegrationPage>
 
             {/* General */}
             <Card title={t('common:general')}>
@@ -653,10 +643,7 @@ function General() {
                   </div>
                 }
               />
-            </Card>
-          </div>
-        </div>
-      </div>
-    </div>
+      </Card>
+    </SettingsIntegrationPage>
   )
 }

@@ -1,8 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { route } from '@/constants/routes'
-import HeaderPage from '@/containers/HeaderPage'
-import SettingsMenu from '@/containers/SettingsMenu'
 import { Card, CardItem } from '@/containers/Card'
+import SettingsIntegrationPage from '@/containers/SettingsIntegrationPage'
 import {
   IconPencil,
   IconPlus,
@@ -426,21 +425,43 @@ function MCPServersDesktop() {
   }, [serviceHub, setConnectedServers])
 
   return (
-    <Fragment>
-      <div className="flex flex-col h-svh w-full">
-        <HeaderPage>
-          <div className={cn("flex items-center justify-between w-full mr-2 pr-3", !IS_MACOS && "pr-30")}>
-            <span className='font-medium text-base font-studio'>{t('common:settings')}</span>
-            <Button variant="outline" size="sm" onClick={() => handleOpenDialog()} className="relative z-50">
-              <IconPlus size={18} className="text-muted-foreground" />
-              {t('mcp-servers:addServer')}
-            </Button>
-          </div>
-        </HeaderPage>
-        <div className="flex h-[calc(100%-60px)]">
-          <SettingsMenu />
-          <div className="p-4 pt-0 w-full overflow-y-auto">
-            <div className="flex flex-col justify-between gap-4 gap-y-3 w-full">
+    <SettingsIntegrationPage
+      headerActions={
+        <Button variant="outline" size="sm" onClick={() => handleOpenDialog()} className="relative z-50">
+          <IconPlus size={18} className="text-muted-foreground" />
+          {t('mcp-servers:addServer')}
+        </Button>
+      }
+      footer={
+        <Fragment>
+          <AddEditMCPServer
+            open={open}
+            onOpenChange={setOpen}
+            editingKey={editingKey}
+            initialData={currentConfig}
+            onSave={handleSaveServer}
+          />
+          <DeleteMCPServerConfirm
+            open={deleteDialogOpen}
+            onOpenChange={setDeleteDialogOpen}
+            serverName={serverToDelete || ''}
+            onConfirm={handleConfirmDelete}
+          />
+          <EditJsonMCPserver
+            open={jsonEditorOpen}
+            onOpenChange={setJsonEditorOpen}
+            serverName={jsonServerName}
+            initialData={
+              jsonEditorData ?? {
+                mcpServers,
+                mcpSettings: settings,
+              }
+            }
+            onSave={handleSaveJson}
+          />
+        </Fragment>
+      }
+    >
               <Card
                 header={
                   <div className="flex flex-col mb-4">
@@ -754,41 +775,7 @@ function MCPServersDesktop() {
                   </Card>
                 ))
               )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Use the AddEditMCPServer component */}
-      <AddEditMCPServer
-        open={open}
-        onOpenChange={setOpen}
-        editingKey={editingKey}
-        initialData={currentConfig}
-        onSave={handleSaveServer}
-      />
-
-      {/* Delete confirmation dialog */}
-      <DeleteMCPServerConfirm
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        serverName={serverToDelete || ''}
-        onConfirm={handleConfirmDelete}
-      />
-
-      {/* JSON editor dialog */}
-      <EditJsonMCPserver
-        open={jsonEditorOpen}
-        onOpenChange={setJsonEditorOpen}
-        serverName={jsonServerName}
-        initialData={
-          jsonEditorData ?? {
-            mcpServers,
-            mcpSettings: settings,
-          }
-        }
-        onSave={handleSaveJson}
-      />
-    </Fragment>
+    </SettingsIntegrationPage>
   )
 }
+

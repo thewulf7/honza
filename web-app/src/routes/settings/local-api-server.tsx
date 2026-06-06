@@ -1,8 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { route } from '@/constants/routes'
-import HeaderPage from '@/containers/HeaderPage'
-import SettingsMenu from '@/containers/SettingsMenu'
 import { Card, CardItem } from '@/containers/Card'
+import SettingsIntegrationPage from '@/containers/SettingsIntegrationPage'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/i18n/react-i18next-compat'
@@ -253,18 +252,9 @@ function LocalAPIServerContent() {
   const isServerRunning = serverStatus !== 'stopped'
 
   return (
-    <div className="flex flex-col h-svh w-full">
-      <HeaderPage>
-        <div
-          className={cn(
-            'flex items-center justify-between w-full mr-2 pr-3',
-            !IS_MACOS && 'pr-30'
-          )}
-        >
-          <span className="font-medium text-base font-studio">
-            {t('common:settings')}
-          </span>
-          <Popover>
+    <SettingsIntegrationPage
+      headerActions={
+        <Popover>
             <PopoverTrigger asChild>
               <Button size="sm" variant="outline" className="relative z-50">
                 <IconSettings2 size={16} />
@@ -410,13 +400,8 @@ function LocalAPIServerContent() {
               </div>
             </PopoverContent>
           </Popover>
-        </div>
-      </HeaderPage>
-      <div className="flex h-[calc(100%-60px)]">
-        <SettingsMenu />
-        <div className="flex-1 flex flex-col min-h-0 pl-0">
-          <div className="flex-1 overflow-y-auto p-4 pt-0">
-            <div className="flex flex-col justify-between gap-4 gap-y-3 w-full">
+      }
+    >
               {/* General Settings */}
               <Card
                 header={
@@ -543,9 +528,6 @@ function LocalAPIServerContent() {
                   }
                 />
               </Card>
-            </div>
-          </div>
-          <div className="p-4 shrink-0">
             <Card>
               <Collapsible defaultOpen={false}>
                 <div className="flex items-center justify-between">
@@ -572,10 +554,7 @@ function LocalAPIServerContent() {
                   </div>
                 </CollapsibleContent>
               </Collapsible>
-            </Card>
-          </div>
-        </div>
-      </div>
-    </div>
+      </Card>
+    </SettingsIntegrationPage>
   )
 }
