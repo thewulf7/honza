@@ -990,31 +990,37 @@ const ChatInput = memo(function ChatInput({
             </div>
           )}
 
-          {(<div className="mb-2 flex flex-wrap items-center gap-2 px-1">
-              <Button
+          <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+            <Button
+              variant="outline"
+              size="xs"
+              className="h-7"
+              onClick={() => void handleSelectWorkingDirectory()}
+            >
+              <IconFolderCode size={10} />
+              {workingDirectory ? getDirectoryLabel(workingDirectory) : (
+              <span className="text-xs text-muted-foreground">
+                No folder selected
+              </span>
+            )}
+            </Button>
+            {agentIdProp !== undefined && (
+              <DropdownAgent
+                selectedAgentId={agentIdProp ?? getLastUsedAgent()}
+                onSelectAgent={(id) => onAgentChange?.(id)}
+              />
+            )}
+            <DropdownModelProvider model={model} />
+            {contextBadges.map((item) => (
+              <Badge
+                key={item}
                 variant="outline"
-                size="xs"
-                className="h-7"
-                onClick={() => void handleSelectWorkingDirectory()}
+                className="border-input/70 bg-background/60 px-2.5 py-1 text-xs text-muted-foreground"
               >
-                <IconFolderCode size={10} />
-                {workingDirectory ? getDirectoryLabel(workingDirectory) : (
-                <span className="text-xs text-muted-foreground">
-                  No folder selected
-                </span>
-              )}
-              </Button>
-              {contextBadges.map((item) => (
-                <Badge
-                  key={item}
-                  variant="outline"
-                  className="border-input/70 bg-background/60 px-2.5 py-1 text-xs text-muted-foreground"
-                >
-                  {item}
-                </Badge>
-              ))}
-            </div>)
-          }
+                {item}
+              </Badge>
+            ))}
+          </div>
 
           <div
             className={cn(
@@ -1488,16 +1494,6 @@ const ChatInput = memo(function ChatInput({
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="mt-2 flex items-center gap-1.5 px-1">
-        {agentIdProp !== undefined && (
-          <DropdownAgent
-            selectedAgentId={agentIdProp ?? getLastUsedAgent()}
-            onSelectAgent={(id) => onAgentChange?.(id)}
-          />
-        )}
-        <DropdownModelProvider model={model} />
       </div>
 
       {localSelectedAgentType === 'codex' && (
