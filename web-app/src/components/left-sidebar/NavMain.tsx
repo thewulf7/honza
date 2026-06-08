@@ -17,7 +17,6 @@ import {
   type SearchIconHandle,
 } from '@/components/animated-icon/search'
 import {
-  FolderPlusIcon,
   type FolderPlusIconHandle,
 } from '@/components/animated-icon/folder-plus'
 import {
@@ -30,7 +29,6 @@ import {
 } from '@/components/animated-icon/settings'
 import { BlocksIcon, type BlocksIconHandle } from '../animated-icon/blocks'
 import {
-  BotIcon,
   type BotIconHandle,
 } from '@/components/animated-icon/bot'
 import AddProjectDialog from '@/containers/dialogs/AddProjectDialog'
@@ -38,10 +36,8 @@ import { SearchDialog } from '@/containers/dialogs/SearchDialog'
 import { useThreadManagement } from '@/hooks/useThreadManagement'
 import { useSearchDialog } from '@/hooks/useSearchDialog'
 import { useProjectDialog } from '@/hooks/useProjectDialog'
-import { useAgentMode } from '@/hooks/useAgentMode'
-import { TEMPORARY_CHAT_ID } from '@/constants/chat'
 import { PlatformShortcuts, ShortcutAction } from '@/lib/shortcuts'
-import { SidebarMode, useSidebarMode } from '@/hooks/useSidebarMode'
+import { SidebarMode } from '@/hooks/useSidebarMode'
 
 type AnimatedIconHandle =
   | SearchIconHandle
@@ -68,14 +64,11 @@ type NavMainItem = {
 }
 
 const getNavMainItems = (
-  onNewProject: () => void,
   onSearch: () => void,
   onNewChat: () => void,
-  onNewAgentChat: () => void,
-  onNewTask: () => void
 ): NavMainItem[] => [
   {
-    title: 'common:newChat',
+    title: 'common:newSession',
     animatedIcon: MessageCircleIcon,
     type: 'chat',
     onClick: onNewChat,
@@ -84,35 +77,7 @@ const getNavMainItems = (
         <Kbd className="bg-transparent size-3">
           <PlatformMetaKey />
         </Kbd>
-        <Kbd className="bg-transparent size-3 uppercase">{PlatformShortcuts[ShortcutAction.NEW_CHAT].key}</Kbd>
-      </KbdGroup>
-    ),
-  },
-  {
-    title: 'common:newSession',
-    animatedIcon: BotIcon,
-    onClick: onNewAgentChat,
-    type: 'agents',
-    shortcut: (
-      <KbdGroup className="ml-auto scale-90 gap-0">
-        <Kbd className="bg-transparent size-3">
-          <PlatformMetaKey />
-        </Kbd>
         <Kbd className="bg-transparent size-3 uppercase">{PlatformShortcuts[ShortcutAction.NEW_AGENT_CHAT].key}</Kbd>
-      </KbdGroup>
-    ),
-  },
-  {
-    title: 'common:projects.new',
-    animatedIcon: FolderPlusIcon,
-    type: 'chat',
-    onClick: onNewProject,
-    shortcut: (
-      <KbdGroup className="ml-auto scale-90 gap-0">
-        <Kbd className="bg-transparent size-3">
-          <PlatformMetaKey />
-        </Kbd>
-        <Kbd className="bg-transparent size-3 uppercase">{PlatformShortcuts[ShortcutAction.NEW_PROJECT].key}</Kbd>
       </KbdGroup>
     ),
   },
@@ -182,19 +147,11 @@ export function NavMain() {
   const { open: projectDialogOpen, setOpen: setProjectDialogOpen } =
     useProjectDialog()
   const navMainItems = getNavMainItems(
-    () => setProjectDialogOpen(true),
     () => setSearchOpen(true),
     () => {
-      useAgentMode.getState().removeThread(TEMPORARY_CHAT_ID)
+      // useAgentMode.getState().removeThread(TEMPORARY_CHAT_ID)
       navigate({ to: route.home })
     },
-    () => {
-      useAgentMode.getState().setAgentMode(TEMPORARY_CHAT_ID, true)
-      navigate({ to: route.agent })
-    },
-    () => {
-      navigate({ to: route.cowork })
-    }
   )
 
   const handleCreateProject = async (name: string, assistantId?: string) => {

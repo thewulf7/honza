@@ -1,16 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { useEffect, useState } from 'react'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
 import ChatInput from '@/containers/ChatInput'
+import DropdownAgent from '@/containers/DropdownAgent'
+import DropdownModelProvider from '@/containers/DropdownModelProvider'
 import HeaderPage from '@/containers/HeaderPage'
-import { useTranslation } from '@/i18n/react-i18next-compat'
-import { useTools } from '@/hooks/useTools'
-import { cn } from '@/lib/utils'
-
-import { useModelProvider } from '@/hooks/useModelProvider'
 import SetupScreen from '@/containers/SetupScreen'
-import { route } from '@/constants/routes'
+import { getBuiltInAgent, renderAgentTypeIcon } from '@/containers/agents/agentDefinitions'
+import { getLastUsedAgent } from '@/constants/localStorage'
 import { predefinedProviders } from '@/constants/providers'
+import { route } from '@/constants/routes'
+import { useTranslation } from '@/i18n/react-i18next-compat'
+import { useModelProvider } from '@/hooks/useModelProvider'
+import { useThreads } from '@/hooks/useThreads'
+import { useTools } from '@/hooks/useTools'
 import { providerHasRemoteApiKeys } from '@/lib/provider-api-keys'
+import { cn } from '@/lib/utils'
 
 type ThreadModel = {
   id: string
@@ -20,9 +25,7 @@ type ThreadModel = {
 type SearchParams = {
   threadModel?: ThreadModel
 }
-import { useEffect } from 'react'
-import { useThreads } from '@/hooks/useThreads'
-import DropdownModelProvider from '@/containers/DropdownModelProvider'
+
 
 export const Route = createFileRoute(route.home as any)({
   component: Index,
@@ -40,8 +43,13 @@ function Index() {
   const { providers } = useModelProvider()
   const search = useSearch({ from: route.home as any })
   const threadModel = search.threadModel
+  const [selectedAgentId, setSelectedAgentId] = useState(getLastUsedAgent)
   const { setCurrentThreadId } = useThreads()
   useTools()
+
+  const selectedAgentType: AgentType = selectedAgentId === 'claude' ? 'claude' : 'codex'
+  const selectedBuiltInAgent = getBuiltInAgent(selectedAgentType)
+  const selectedAgentTitle = selectedBuiltInAgent?.name ?? t('common:agents')
 
   // Conditional to check if there are any valid providers
   // required min 1 api_key or 1 model in llama.cpp or jan provider
@@ -76,6 +84,10 @@ function Index() {
     <div className="flex h-full flex-col justify-center">
       <HeaderPage>
         <div className="flex items-center gap-2 w-full">
+          <DropdownAgent
+            selectedAgentId={selectedAgentId}
+            onSelectAgent={setSelectedAgentId}
+          />
           <DropdownModelProvider model={threadModel} />
         </div>
       </HeaderPage>
@@ -90,21 +102,29 @@ function Index() {
           )}
         >
           <div className={cn('text-center mb-4')}>
-            <h1
-              className={cn(
-                'text-2xl mt-2 font-studio font-medium',
-              )}
-            >
-              {t('chat:description')}
-            </h1>
+            <div className="inline-flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center shrink-0">
+                {renderAgentTypeIcon(
+                  selectedAgentType,
+                  26,
+                  'text-foreground opacity-80'
+                )}
+              </div>
+              <h1
+                className={cn(
+                  'text-2xl mt-2 font-studio font-medium',
+                )}
+              >
+                {selectedAgentTitle}
+              </h1>
+            </div>
           </div>
-          <div className="flex-1 shrink-0">
-            <ChatInput
-              showSpeedToken={false}
-              model={threadModel}
-              initialMessage={true}
-            />
-          </div>
+          <ChatInput
+            showSpeedToken={false}
+            model={threadModel}
+            initialMessage={true}
+            agentId={selectedAgentId}
+          />
         </div>
       </div>
     </div>

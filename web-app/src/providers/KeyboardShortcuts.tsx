@@ -33,7 +33,7 @@ export function KeyboardShortcutsProvider() {
   useKeyboardShortcut({
     ...newChatShortcut,
     callback: () => {
-      useAgentMode.getState().removeThread(TEMPORARY_CHAT_ID)
+      // useAgentMode.getState().removeThread(TEMPORARY_CHAT_ID)
       router.navigate({ to: route.home })
     },
   })

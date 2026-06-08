@@ -94,7 +94,6 @@ import {
 } from '@/types/attachment'
 import JanBrowserExtensionDialog from '@/containers/dialogs/JanBrowserExtensionDialog'
 import { useJanBrowserExtension } from '@/hooks/useJanBrowserExtension'
-import { useAgentMode } from '@/hooks/useAgentMode'
 import { AssistantsMenu } from '@/components/AssistantsMenu'
 import { Badge } from '@/components/ui/badge'
 import { getLastUsedAgent, localStorageKey } from '@/constants/localStorage'
@@ -184,18 +183,6 @@ const ChatInput = memo(function ChatInput({
     setCurrentAssistant,
     assistants
   } = useAssistant()
-
-  // Agent mode
-  // Use TEMPORARY_CHAT_ID as fallback key on the home screen (same pattern as attachments)
-  const agentModeKey = currentThreadId ?? TEMPORARY_CHAT_ID
-  const isAgentMode = useAgentMode((state) =>
-    state.agentThreads[agentModeKey] === true
-  )
-  const toggleAgentMode = useAgentMode((state) => state.toggleAgentMode)
-
-  const handleAgentToggle = useCallback(() => {
-    toggleAgentMode(agentModeKey)
-  }, [agentModeKey, toggleAgentMode])
 
   // Get current thread messages for token counting
   const threadMessages = useMessages(
@@ -490,11 +477,7 @@ const ChatInput = memo(function ChatInput({
           JSON.stringify(messagePayload)
         )
         sessionStorage.setItem('temp-chat-nav', 'true')
-        // Transfer agent mode from home screen to temporary thread
-        if (isAgentMode && agentModeKey !== TEMPORARY_CHAT_ID) {
-          useAgentMode.getState().setAgentMode(TEMPORARY_CHAT_ID, true)
-          useAgentMode.getState().removeThread(agentModeKey)
-        }
+      
         router.navigate({
           to: route.threadsDetail,
           params: { threadId: TEMPORARY_CHAT_ID },
@@ -541,12 +524,6 @@ const ChatInput = memo(function ChatInput({
           assistant,
           projectMetadata
         )
-
-        // Transfer agent mode from home screen to the new thread
-        if (isAgentMode) {
-          useAgentMode.getState().setAgentMode(newThread.id, true)
-          useAgentMode.getState().removeThread(agentModeKey)
-        }
 
         // Store the initial message for the new thread
         sessionStorage.setItem(
@@ -630,7 +607,7 @@ const ChatInput = memo(function ChatInput({
   useEffect(() => () => { if (codexBehaviorSaveRef.current) clearTimeout(codexBehaviorSaveRef.current) }, [])
 
   useEffect(() => {
-    if (!isAgentMode || localSelectedAgentType !== 'codex') return
+    if (localSelectedAgentType !== 'codex') return
     const configPathOverride = codexSettings.configFilePath || null
     invoke<Record<string, unknown>>('parse_codex_config_fields', { configPathOverride })
       .then((fields) => {
@@ -641,7 +618,7 @@ const ChatInput = memo(function ChatInput({
         })
       })
       .catch(() => {})
-  }, [isAgentMode, localSelectedAgentType, codexSettings.configFilePath])
+  }, [localSelectedAgentType, codexSettings.configFilePath])
 
   const saveCodexBehaviorField = <K extends keyof typeof codexBehavior>(
     key: K,
@@ -1722,7 +1699,7 @@ const ChatInput = memo(function ChatInput({
             </div>
           )}
 
-          {isAgentMode && (<div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+          {(<div className="mb-2 flex flex-wrap items-center gap-2 px-1">
               <Button
                 variant="outline"
                 size="xs"
@@ -2252,31 +2229,29 @@ const ChatInput = memo(function ChatInput({
                   ))}
 
                 {/* Agent mode toggle hidden — kept as dead code for future use */}
-                {false && !projectId && isAgentMode && (
+                {false && !projectId && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
-                        variant={isAgentMode ? "default" : "ghost"}
+                        variant="default"
                         size="icon-xs"
                         onClick={currentThreadId ? handleAgentToggle : undefined}
                         className={cn(
-                          isAgentMode && 'text-primary bg-primary/10 hover:bg-primary/10 items-center',
+                          'text-primary bg-primary/10 hover:bg-primary/10 items-center',
                           !currentThreadId && 'cursor-default pointer-events-none'
                         )}
                       >
                         <BotIcon
                           className={cn(
                             'text-muted-foreground -mt-0.5',
-                            isAgentMode && 'text-primary'
+                            'text-primary'
                           )}
                         />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>
-                        {isAgentMode
-                          ? 'Agent mode active'
-                          : 'Enable agent mode'}
+                        {'Agent mode active'}
                       </p>
                     </TooltipContent>
                   </Tooltip>
@@ -2298,10 +2273,10 @@ const ChatInput = memo(function ChatInput({
                   </Tooltip>
                 )}
 
-                {(selectedProvider === 'llamacpp' || isAgentMode) &&
+                {(selectedProvider === 'llamacpp') &&
                   (() => {
                     // Codex mode: reasoning effort (low / medium / high)
-                    if (isAgentMode && localSelectedAgentType === 'codex') {
+                    if (localSelectedAgentType === 'codex') {
                       const effortValue = codexBehavior.model_reasoning_effort
                       const effortLabel = effortValue
                         ? tSettings(`codex.reasoningEffort.${effortValue}`, { defaultValue: effortValue })
@@ -2518,7 +2493,7 @@ const ChatInput = memo(function ChatInput({
         </div>
       </div>
 
-      {isAgentMode && localSelectedAgentType === 'codex' && (
+      {localSelectedAgentType === 'codex' && (
         <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import {
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuAction,
@@ -31,6 +32,9 @@ import { useTranslation } from '@/i18n/react-i18next-compat'
 import type { ThreadFolder } from "@/services/projects/types"
 import AddProjectDialog from "@/containers/dialogs/AddProjectDialog"
 import { DeleteProjectDialog } from "@/containers/dialogs/DeleteProjectDialog"
+import { useProjectDialog } from '@/hooks/useProjectDialog'
+import { Button } from "../ui/button"
+import IconPlus from "@tabler/icons-react/dist/esm/icons/IconPlus"
 
 function ProjectItem({
   item,
@@ -94,6 +98,7 @@ export function NavProjects() {
   const { t } = useTranslation()
   const { isMobile } = useSidebar()
   const { folders, updateFolder } = useThreadManagement()
+  const { open: projectDialogOpen, setOpen: setProjectDialogOpen } = useProjectDialog()
 
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -117,14 +122,15 @@ export function NavProjects() {
     }
   }
 
-  if (folders.length === 0) {
-    return null
-  }
-
   return (
     <>
       <SidebarGroup className="group-data-[collapsible=icon]:hidden">
         <SidebarGroupLabel>{t('common:projects.title')}</SidebarGroupLabel>
+        <SidebarGroupAction className="hover:bg-sidebar-foreground/8">
+          <Button variant="ghost" size="icon-xs" onClick={() => setProjectDialogOpen(true)}>
+            <IconPlus size={12} />
+          </Button>
+        </SidebarGroupAction>
         <SidebarMenu>
           {folders.map((item) => (
             <ProjectItem

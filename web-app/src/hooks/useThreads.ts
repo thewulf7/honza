@@ -3,7 +3,6 @@ import { ulid } from 'ulidx'
 import { getServiceHub } from '@/hooks/useServiceHub'
 import { Fzf } from 'fzf'
 import { TEMPORARY_CHAT_ID } from '@/constants/chat'
-import { useAgentMode } from '@/hooks/useAgentMode'
 import { ExtensionManager } from '@/lib/extension'
 import { ExtensionTypeEnum, VectorDBExtension } from '@janhq/core'
 import { useChatSessions } from '@/stores/chat-session-store'
@@ -157,7 +156,7 @@ export const useThreads = create<ThreadState>()((set, get) => ({
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [threadId]: _, ...remainingThreads } = state.threads
 
-      useAgentMode.getState().removeThread(threadId)
+      // useAgentMode.getState().removeThread(threadId)
       useChatSessions.getState().removeSession(threadId)
       useAppState.getState().clearThreadState(threadId)
       cleanupVectorDB(threadId)
@@ -227,7 +226,7 @@ export const useThreads = create<ThreadState>()((set, get) => ({
       const allThreadIds = Object.keys(state.threads)
 
       allThreadIds.forEach((threadId) => {
-        useAgentMode.getState().removeThread(threadId)
+        // useAgentMode.getState().removeThread(threadId)
         useChatSessions.getState().removeSession(threadId)
         useAppState.getState().clearThreadState(threadId)
         cleanupVectorDB(threadId)
