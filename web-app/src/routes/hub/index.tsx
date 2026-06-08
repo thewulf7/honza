@@ -446,7 +446,7 @@ function HubContent() {
 
   return (
     <div className="flex flex-col h-svh w-full">
-      <div className="flex flex-col h-full w-full ">
+      <div className="flex flex-col h-full w-full rounded-xl border bg-white dark:bg-neutral-900/50 dark:border-neutral-700">
         <HeaderPage>
           <div className={cn("pr-3 py-3  h-10 w-full flex items-center justify-between relative z-20", !IS_MACOS && "pr-30")}>
             <div className="flex items-center gap-2 w-full">
@@ -471,7 +471,7 @@ function HubContent() {
           </div>
         </HeaderPage>
         <div ref={parentRef} className="p-4 w-full h-[calc(100%-60px)] overflow-y-auto! first-step-setup-local-provider">
-          <div className="flex flex-col h-full justify-between gap-4 gap-y-3 w-full md:w-4/5 xl:w-4/6 mx-auto">
+          <div className="flex flex-col h-full justify-between gap-4 gap-y-3 w-full xl:w-4/6 mx-auto">
             {/* Show skeleton immediately on navigation, then show actual content when loaded */}
             {(isInitialLoad || (loading && !filteredModels.length)) ? (
               // Skeleton loading state for better perceived performance
@@ -479,7 +479,7 @@ function HubContent() {
                 {[...Array(5)].map((_, i) => (
                   <div
                     key={i}
-                    className="bg-card border border-border rounded-lg p-4"
+                    className="p-4"
                   >
                     <div className="flex items-center justify-between gap-x-2">
                       <div className="h-5 bg-muted rounded w-1/3" />

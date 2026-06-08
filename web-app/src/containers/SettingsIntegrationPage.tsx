@@ -27,14 +27,14 @@ export default function SettingsIntegrationPage({
               : 'gap-2'
           )}
         >
-          <span className="font-medium text-base font-studio">
+          <span className="font-medium text-3xl font-manrope">
             {t('common:settings')}
           </span>
           {headerActions}
         </div>
       </HeaderPage>
-      <div className="flex h-[calc(100%-60px)]">
-        <SettingsMenu />
+      <div className="flex h-[calc(100%-60px)] rounded-xl border bg-white dark:bg-neutral-900/50 dark:border-neutral-700">
+        <SettingsMenu/>
         <div className="p-4 pt-0 w-full overflow-y-auto">
           <div className="flex flex-col justify-between gap-4 gap-y-3 w-full">
             {children}

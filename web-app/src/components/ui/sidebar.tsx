@@ -313,7 +313,7 @@ const Sidebar = React.forwardRef<
 				>
 					<div
 						data-sidebar="sidebar"
-						className="flex bg-clip-padding h-full w-full flex-col bg-linear-to-b from-sidebar dark:from-sidebar/70 to-background group-data-[variant=floating]:rounded-xl group-data-[variant=floating]:shadow group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border"
+						className="flex bg-clip-padding h-full w-full flex-col"
 					>
 						{children}
 					</div>
@@ -419,7 +419,7 @@ const SidebarInset = React.forwardRef<
 			className={cn(
 				// min-w-0 prevents flex-1 children from expanding beyond the flex container
 				// when they contain non-breakable content (e.g. long URLs without whitespace).
-				"relative flex min-h-svh flex-1 flex-col bg-background min-w-0",
+				"relative flex min-h-svh flex-1 flex-col min-w-0",
 				"peer-data-[variant=inset]:min-h-[calc(100svh-(--spacing(4)))] md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm",
 				className,
 			)}

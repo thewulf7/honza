@@ -219,7 +219,7 @@ const SettingsMenu = () => {
 
   return (
     <>
-      <div className="h-full w-58 shrink-0 px-1.5 flex overflow-auto">
+      <div className="h-full w-58 shrink-0 px-1.5 flex overflow-auto border-r pt-4">
         <div className="flex flex-col gap-1 w-full font-medium">
           {/* Core settings */}
           {coreSettings.map((menu) => (
@@ -229,7 +229,7 @@ const SettingsMenu = () => {
                 className="block px-2 gap-1.5 cursor-pointer hover:dark:bg-secondary/60 hover:bg-secondary py-1 w-full rounded-sm [&.active]:dark:bg-secondary/80 [&.active]:bg-secondary"
               >
                 <div className="flex items-center gap-2">
-                  <menu.icon size={18} className="shrink-0 text-muted-foreground" />
+                  <menu.icon size={20} className="shrink-0 text-muted-foreground" />
                   <span>{t(menu.title)}</span>
                 </div>
               </Link>
@@ -251,7 +251,7 @@ const SettingsMenu = () => {
                   to={menu.route}
                   className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:dark:bg-secondary/60 hover:bg-secondary rounded-sm [&.active]:dark:bg-secondary/80 [&.active]:bg-secondary"
                 >
-                  <menu.icon size={18} className="shrink-0 text-muted-foreground" />
+                  <menu.icon size={20} className="shrink-0 text-muted-foreground" />
                   <span>{t(menu.title)}</span>
                 </Link>
               ))}

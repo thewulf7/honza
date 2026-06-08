@@ -1305,7 +1305,7 @@ function ThreadDetail() {
       <div className="flex flex-1 flex-col h-full overflow-hidden">
         {/* Messages Area */}
         <div className="flex-1 relative">
-          <Conversation className="absolute inset-0 text-start">
+          <Conversation className="absolute inset-0 text-start mx-3 rounded-xl border bg-white dark:bg-neutral-900/50 dark:border-neutral-700">
             <ConversationContent
               className={cn('mx-auto w-full md:w-4/5 xl:w-4/6')}
             >

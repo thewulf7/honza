@@ -48,7 +48,7 @@ const AppLayout = () => {
   } = useLeftPanel()
 
   return (
-    <div className="bg-neutral-50 dark:bg-background size-full relative">
+    <div className="bg-neutral-50 dark:bg-background size-full relative p-4">
       <SidebarProvider
         open={isLeftPanelOpen}
         onOpenChange={setLeftPanel}
