@@ -43,7 +43,7 @@ import { generateId } from 'ai'
 import { useMessageQueue } from '@/stores/message-queue-store'
 import { QueuedMessageChip } from '@/containers/QueuedMessageBubble'
 import { SamplerPopover } from '@/containers/SamplerPopover'
-import { BotIcon, ChevronsUpDown } from 'lucide-react'
+import { ChevronsUpDown } from 'lucide-react'
 import { useCodexSettings } from '@/hooks/useCodexSettings'
 import { useClaudeCodeModel } from '@/hooks/useClaudeCodeModel'
 import { useTranslation } from '@/i18n/react-i18next-compat'
@@ -153,7 +153,6 @@ const ChatInput = memo(function ChatInput({
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isFocused, setIsFocused] = useState(false)
-  const [rows, setRows] = useState(1)
   const serviceHub = useServiceHub()
   const abortControllers = useAppState((state) => state.abortControllers)
   const tools = useAppState((state) => state.tools)
@@ -206,11 +205,15 @@ const ChatInput = memo(function ChatInput({
     'tools' | 'assistants' | false
   >(false)
   const [isDragOver, setIsDragOver] = useState(false)
-  const [hasMmproj, setHasMmproj] = useState(false)
   const activeModels = useAppState(useShallow((state) => state.activeModels))
   const wasPointerDown = useRef(false)
 
   const [workingDirectory, setWorkingDirectory] = useState(getAgentWorkingDirectory)
+
+  const hasMmproj = useMemo(
+    () => !!selectedModel?.capabilities?.includes('vision'),
+    [selectedModel?.capabilities]
+  )
 
   // Check if selected model is currently loaded/active
   const isModelActive = selectedModel?.id ? activeModels.includes(selectedModel.id) : false
@@ -334,11 +337,6 @@ const ChatInput = memo(function ChatInput({
     (a) => (a.type === 'image' || a.type === 'audio') && !!a.dataUrl
   )
 
-  const [, setFileIngestProgress] = useState<{
-    completed: number
-    total: number
-  } | null>(null)
-
   // Queued messages for this thread (shown as chips in the input area)
   const queuedMessages = useMessageQueue(
     useShallow((s) => s.getQueue(currentThreadId ?? ''))
@@ -364,27 +362,6 @@ const ChatInput = memo(function ChatInput({
     }
   }, [currentThreadId, transferAttachments])
 
-  // Check for mmproj existence or vision capability when model changes
-  useEffect(() => {
-    const checkMmprojSupport = async () => {
-      if (selectedModel && selectedModel?.id) {
-        try {
-          // Only check mmproj for llamacpp provider
-          if (selectedModel?.capabilities?.includes('vision')) {
-            setHasMmproj(true)
-          } else {
-            setHasMmproj(false)
-          }
-        } catch (error) {
-          console.error('Error checking mmproj:', error)
-          setHasMmproj(false)
-        }
-      }
-    }
-
-    checkMmprojSupport()
-  }, [selectedModel, selectedModel?.capabilities, selectedProvider, serviceHub])
-
   // Check if there are active MCP servers
   const hasActiveMCPServers =
     tools.filter((tool) => tool.server !== 'Jan Browser MCP').length > 0
@@ -393,6 +370,23 @@ const ChatInput = memo(function ChatInput({
   const extensionManager = ExtensionManager.getInstance()
   const mcpExtension = extensionManager.get<MCPExtension>(ExtensionTypeEnum.MCP)
   const MCPToolComponent = mcpExtension?.getToolComponent?.()
+
+  const buildFilesFromAttachments = (atts: typeof attachments) => [
+    ...atts
+      .filter((att) => att.type === 'image' && att.dataUrl)
+      .map((att) => ({
+        type: 'file' as const,
+        mediaType: att.mimeType ?? 'image/jpeg',
+        url: att.dataUrl!,
+      })),
+    ...atts
+      .filter((att) => att.type === 'audio' && att.dataUrl)
+      .map((att) => ({
+        type: 'file' as const,
+        mediaType: att.audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav',
+        url: att.dataUrl!,
+      })),
+  ]
 
   const handleSendMessage = async (prompt: string) => {
     if (!selectedModel) {
@@ -423,21 +417,7 @@ const ChatInput = memo(function ChatInput({
         return
       }
 
-      const imageFiles = attachments
-        .filter((att) => att.type === 'image' && att.dataUrl)
-        .map((att) => ({
-          type: 'file',
-          mediaType: att.mimeType ?? 'image/jpeg',
-          url: att.dataUrl!,
-        }))
-      const audioFiles = attachments
-        .filter((att) => att.type === 'audio' && att.dataUrl)
-        .map((att) => ({
-          type: 'file',
-          mediaType: att.audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav',
-          url: att.dataUrl!,
-        }))
-      const files = [...imageFiles, ...audioFiles]
+      const files = buildFilesFromAttachments(attachments)
 
       onSubmit(prompt, files.length > 0 ? files : undefined)
       setPrompt('')
@@ -449,21 +429,7 @@ const ChatInput = memo(function ChatInput({
         `${TEMPORARY_CHAT_QUERY_ID}=true`
       )
 
-      const imageFiles = attachments
-        .filter((att) => att.type === 'image' && att.dataUrl)
-        .map((att) => ({
-          type: 'file',
-          mediaType: att.mimeType ?? 'image/jpeg',
-          url: att.dataUrl!,
-        }))
-      const audioFiles = attachments
-        .filter((att) => att.type === 'audio' && att.dataUrl)
-        .map((att) => ({
-          type: 'file',
-          mediaType: att.audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav',
-          url: att.dataUrl!,
-        }))
-      const files = [...imageFiles, ...audioFiles]
+      const files = buildFilesFromAttachments(attachments)
 
       const messagePayload = {
         text: prompt,
@@ -1034,35 +1000,27 @@ const ChatInput = memo(function ChatInput({
     const invalidTypeFiles: string[] = []
 
     const allowedTypes = ['image/jpg', 'image/jpeg', 'image/png']
-    const validFiles: File[] = []
+    const validFiles: Array<{ file: File; mimeType: string }> = []
 
     // First pass: validate file size and type (no duplicate check yet)
     Array.from(files).forEach((file) => {
-      // Check file size
       if (file.size > maxSize) {
         oversizedFiles.push(file.name)
         return
       }
 
-      // Get file type - use extension as fallback if MIME type is incorrect
-      const detectedType = file.type || getFileTypeFromExtension(file.name)
-      const actualType = getFileTypeFromExtension(file.name) || detectedType
-
-      // Check file type - images only
-      if (!allowedTypes.includes(actualType)) {
+      const mimeType = getFileTypeFromExtension(file.name) || file.type
+      if (!allowedTypes.includes(mimeType)) {
         invalidTypeFiles.push(file.name)
         return
       }
 
-      validFiles.push(file)
+      validFiles.push({ file, mimeType })
     })
 
     // Process valid files into attachments
     const preparedFiles: Attachment[] = []
-    for (const file of validFiles) {
-      const detectedType = file.type || getFileTypeFromExtension(file.name)
-      const actualType = getFileTypeFromExtension(file.name) || detectedType
-
+    for (const { file, mimeType: actualType } of validFiles) {
       const reader = new FileReader()
       await new Promise<void>((resolve) => {
         reader.onload = () => {
@@ -1134,61 +1092,44 @@ const ChatInput = memo(function ChatInput({
     )
 
     if (currentThreadId && newFiles.length > 0) {
-      const ingestTotal = newFiles.length
       void (async () => {
-        setFileIngestProgress({ completed: 0, total: ingestTotal })
-        try {
-          for (let i = 0; i < newFiles.length; i++) {
-            const img = newFiles[i]
-            const matchImg = (a: Attachment) =>
-              a.type === 'image' &&
-              (img.contentHash
-                ? a.contentHash === img.contentHash
-                : a.name === img.name)
+        for (const img of newFiles) {
+          const matchImg = (a: Attachment) =>
+            a.type === 'image' &&
+            (img.contentHash
+              ? a.contentHash === img.contentHash
+              : a.name === img.name)
 
-            try {
+          try {
+            setAttachmentsForThread(attachmentsKey, (prev) =>
+              prev.map((a) => (matchImg(a) ? { ...a, processing: true } : a))
+            )
+
+            const result = await serviceHub
+              .uploads()
+              .ingestImage(currentThreadId, img)
+
+            if (result?.id) {
               setAttachmentsForThread(attachmentsKey, (prev) =>
-                prev.map((a) => (matchImg(a) ? { ...a, processing: true } : a))
-              )
-
-              const result = await serviceHub
-                .uploads()
-                .ingestImage(currentThreadId, img)
-
-              if (result?.id) {
-                setAttachmentsForThread(attachmentsKey, (prev) =>
-                  prev.map((a) =>
-                    matchImg(a)
-                      ? {
-                          ...a,
-                          processing: false,
-                          processed: true,
-                          id: result.id,
-                        }
-                      : a
-                  )
+                prev.map((a) =>
+                  matchImg(a)
+                    ? { ...a, processing: false, processed: true, id: result.id }
+                    : a
                 )
-              } else {
-                throw new Error('No ID returned from image ingestion')
-              }
-            } catch (error) {
-              console.error('Failed to ingest image:', error)
-              setAttachmentsForThread(attachmentsKey, (prev) =>
-                prev.filter((a) => !matchImg(a))
               )
-              toast.error(`Failed to ingest ${img.name}`, {
-                description:
-                  error instanceof Error ? error.message : String(error),
-              })
-            } finally {
-              setFileIngestProgress({
-                completed: i + 1,
-                total: ingestTotal,
-              })
+            } else {
+              throw new Error('No ID returned from image ingestion')
             }
+          } catch (error) {
+            console.error('Failed to ingest image:', error)
+            setAttachmentsForThread(attachmentsKey, (prev) =>
+              prev.filter((a) => !matchImg(a))
+            )
+            toast.error(`Failed to ingest ${img.name}`, {
+              description:
+                error instanceof Error ? error.message : String(error),
+            })
           }
-        } finally {
-          setFileIngestProgress(null)
         }
       })()
     }
@@ -1222,7 +1163,7 @@ const ChatInput = memo(function ChatInput({
     } else {
       setMessage('')
     }
-  }, [attachmentsKey, currentThreadId, setAttachmentsForThread, serviceHub, setFileIngestProgress])
+  }, [attachmentsKey, currentThreadId, setAttachmentsForThread, serviceHub])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -1464,30 +1405,19 @@ const ChatInput = memo(function ChatInput({
 
   const dropAcceptsAnything = hasMmproj || audioSupported
 
-  const handleDragEnter = (e: React.DragEvent) => {
+  const handleDragEnterOrOver = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (dropAcceptsAnything) {
-      setIsDragOver(true)
-    }
+    if (dropAcceptsAnything) setIsDragOver(true)
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    // Only set dragOver to false if we're leaving the drop zone entirely
-    // In Tauri, relatedTarget can be null, so we need to handle that case
+    // In Tauri, relatedTarget can be null when leaving the window
     const relatedTarget = e.relatedTarget as Node | null
     if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
       setIsDragOver(false)
-    }
-  }
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (dropAcceptsAnything) {
-      setIsDragOver(true)
     }
   }
 
@@ -1669,10 +1599,6 @@ const ChatInput = memo(function ChatInput({
         }
       }
 
-      // If we reach here, no image was found - allow normal text pasting to continue
-      console.log(
-        'No image data found in clipboard, allowing normal text paste'
-      )
     }
     // If hasMmproj is false or no images found, allow normal text pasting to continue
   }
@@ -1732,9 +1658,9 @@ const ChatInput = memo(function ChatInput({
               isDragOver && 'ring-2 ring-ring/50 border-primary'
             )}
             data-drop-zone={dropAcceptsAnything ? 'true' : undefined}
-            onDragEnter={dropAcceptsAnything ? handleDragEnter : undefined}
+            onDragEnter={dropAcceptsAnything ? handleDragEnterOrOver : undefined}
             onDragLeave={dropAcceptsAnything ? handleDragLeave : undefined}
-            onDragOver={dropAcceptsAnything ? handleDragOver : undefined}
+            onDragOver={dropAcceptsAnything ? handleDragEnterOrOver : undefined}
             onDrop={dropAcceptsAnything ? handleDrop : undefined}
           >
             {attachments.length > 0 && (
@@ -1873,9 +1799,6 @@ const ChatInput = memo(function ChatInput({
               data-testid={'chat-input'}
               onChange={(e) => {
                 setPrompt(e.target.value)
-                // Count the number of newlines to estimate rows
-                const newRows = (e.target.value.match(/\n/g) || []).length + 1
-                setRows(Math.min(newRows, maxRows))
               }}
               onKeyDown={(e) => {
                 // e.keyCode 229 is for IME input with Safari
@@ -1921,7 +1844,7 @@ const ChatInput = memo(function ChatInput({
               data-gramm_grammarly={spellCheckChatInput}
               className={cn(
                 'bg-transparent pt-4 w-full shrink-0 border-none resize-none outline-0 px-4',
-                rows < maxRows && 'scrollbar-hide',
+                (prompt.match(/\n/g)?.length ?? 0) + 1 < maxRows && 'scrollbar-hide',
                 className
               )}
             />
@@ -2079,14 +2002,6 @@ const ChatInput = memo(function ChatInput({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
-                {/* {model?.provider === 'llamacpp' && loadingModel ? (
-                  <ModelLoader />
-                ) : (
-                  <DropdownModelProvider
-                    model={model}
-                    useLastUsedModel={initialMessage}
-                  />
-                )} */}
                 <SamplerPopover
                   providerId={selectedProvider}
                   modelId={selectedModel?.id}
@@ -2227,35 +2142,6 @@ const ChatInput = memo(function ChatInput({
                       </TooltipContent>
                     </Tooltip>
                   ))}
-
-                {/* Agent mode toggle hidden — kept as dead code for future use */}
-                {false && !projectId && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="default"
-                        size="icon-xs"
-                        onClick={currentThreadId ? handleAgentToggle : undefined}
-                        className={cn(
-                          'text-primary bg-primary/10 hover:bg-primary/10 items-center',
-                          !currentThreadId && 'cursor-default pointer-events-none'
-                        )}
-                      >
-                        <BotIcon
-                          className={cn(
-                            'text-muted-foreground -mt-0.5',
-                            'text-primary'
-                          )}
-                        />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>
-                        {'Agent mode active'}
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
 
                 {selectedModel?.capabilities?.includes('web_search') && (
                   <Tooltip>
