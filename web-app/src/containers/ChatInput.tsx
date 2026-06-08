@@ -1,6 +1,6 @@
 import TextareaAutosize from 'react-textarea-autosize'
 import { invoke } from '@tauri-apps/api/core'
-import { cn, formatBytes, getModelDisplayName } from '@/lib/utils'
+import { cn, getModelDisplayName } from '@/lib/utils'
 import { usePrompt } from '@/hooks/usePrompt'
 import { useThreads } from '@/hooks/useThreads'
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
@@ -24,7 +24,6 @@ import { ArrowRight, PlusIcon } from 'lucide-react'
 import {
   IconPhoto,
   IconMusic,
-  IconBrain,
   IconTool,
   IconCodeCircle2,
   IconPlayerStopFilled,
@@ -35,15 +34,11 @@ import {
   IconBrandChrome,
   IconUser,
   IconFolderCode,
-  IconHandStop,
-  IconTerminal2,
-  IconAlertCircle,
 } from '@tabler/icons-react'
 import { generateId } from 'ai'
 import { useMessageQueue } from '@/stores/message-queue-store'
 import { QueuedMessageChip } from '@/containers/QueuedMessageBubble'
 import { SamplerPopover } from '@/containers/SamplerPopover'
-import { ChevronsUpDown } from 'lucide-react'
 import { useCodexSettings } from '@/hooks/useCodexSettings'
 import { useClaudeCodeModel } from '@/hooks/useClaudeCodeModel'
 import { useTranslation } from '@/i18n/react-i18next-compat'
@@ -97,6 +92,13 @@ import { useJanBrowserExtension } from '@/hooks/useJanBrowserExtension'
 import { AssistantsMenu } from '@/components/AssistantsMenu'
 import { Badge } from '@/components/ui/badge'
 import { getLastUsedAgent, localStorageKey } from '@/constants/localStorage'
+import { AttachmentThumbnailsRow } from '@/containers/AttachmentThumbnailsRow'
+import { CodexBehaviorToolbar } from '@/containers/CodexBehaviorToolbar'
+import {
+  CodexReasoningDropdown,
+  LlamacppReasoningDropdown,
+} from '@/containers/ReasoningDropdown'
+import { useCodexBehaviorState } from '@/hooks/useCodexBehaviorState'
 
 type ChatInputProps = {
   className?: string
@@ -136,11 +138,6 @@ const setAgentWorkingDirectory = (path: string) => {
 const getDirectoryLabel = (path: string) =>
   path.split(/[\\/]/).filter(Boolean).pop() ?? path
 
-const CODEX_APPROVAL_POLICIES = [
-  { value: 'on-request' as const, Icon: IconHandStop },
-  { value: 'on-failure' as const, Icon: IconTerminal2 },
-  { value: 'never' as const, Icon: IconAlertCircle },
-]
 
 const ChatInput = memo(function ChatInput({
   className,
@@ -195,10 +192,6 @@ const ChatInput = memo(function ChatInput({
 
   const selectedModel = useModelProvider((state) => state.selectedModel)
   const selectedProvider = useModelProvider((state) => state.selectedProvider)
-  const selectModelProvider = useModelProvider(
-    (state) => state.selectModelProvider
-  )
-  const updateProvider = useModelProvider((state) => state.updateProvider)
   const [message, setMessage] = useState('')
   const [dropdownToolsAvailable, setDropdownToolsAvailable] = useState(false)
   const [tooltipShown, setTooltipShown] = useState<
@@ -235,7 +228,6 @@ const ChatInput = memo(function ChatInput({
 
   const assistantCount = assistants?.length || 0
 
-  const { t: tSettings } = useTranslation('settings')
   const { settings: codexSettings } = useCodexSettings()
   const { models: claudeModels } = useClaudeCodeModel()
   const allProviders = useModelProvider((state) => state.providers)
@@ -327,8 +319,6 @@ const ChatInput = memo(function ChatInput({
   const transferAttachments = useChatAttachments(
     (state) => state.transferAttachments
   )
-  const getProviderByName = useModelProvider((state) => state.getProviderByName)
-
   const ingestingDocs = attachments.some(
     (a) => a.type === 'document' && a.processing
   )
@@ -564,49 +554,10 @@ const ChatInput = memo(function ChatInput({
     }
   }, [chatStatus])
 
-  const [codexBehavior, setCodexBehavior] = useState({
-    model_reasoning_effort: '',
-    approval_policy: '',
-    sandbox_mode: '',
+  const { codexBehavior, saveCodexBehaviorField } = useCodexBehaviorState({
+    localSelectedAgentType,
+    configFilePath: codexSettings.configFilePath,
   })
-  const codexBehaviorSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (codexBehaviorSaveRef.current) clearTimeout(codexBehaviorSaveRef.current) }, [])
-
-  useEffect(() => {
-    if (localSelectedAgentType !== 'codex') return
-    const configPathOverride = codexSettings.configFilePath || null
-    invoke<Record<string, unknown>>('parse_codex_config_fields', { configPathOverride })
-      .then((fields) => {
-        setCodexBehavior({
-          model_reasoning_effort: (fields.model_reasoning_effort as string | null) ?? '',
-          approval_policy: (fields.approval_policy as string | null) ?? '',
-          sandbox_mode: (fields.sandbox_mode as string | null) ?? '',
-        })
-      })
-      .catch(() => {})
-  }, [localSelectedAgentType, codexSettings.configFilePath])
-
-  const saveCodexBehaviorField = <K extends keyof typeof codexBehavior>(
-    key: K,
-    val: (typeof codexBehavior)[K]
-  ) => {
-    const next = { ...codexBehavior, [key]: val }
-    setCodexBehavior(next)
-    if (codexBehaviorSaveRef.current) clearTimeout(codexBehaviorSaveRef.current)
-    codexBehaviorSaveRef.current = setTimeout(() => {
-      const configPathOverride = codexSettings.configFilePath || null
-      invoke('update_codex_config_fields', {
-        fields: {
-          model_reasoning_effort: next.model_reasoning_effort || null,
-          approval_policy: next.approval_policy || null,
-          sandbox_mode: next.sandbox_mode || null,
-        },
-        configPathOverride,
-      }).catch((err: unknown) => {
-        console.error('Failed to save Codex config field:', err)
-      })
-    }, 300)
-  }
 
   const stopStreaming = useCallback(
     (threadId: string) => {
@@ -1663,115 +1614,10 @@ const ChatInput = memo(function ChatInput({
             onDragOver={dropAcceptsAnything ? handleDragEnterOrOver : undefined}
             onDrop={dropAcceptsAnything ? handleDrop : undefined}
           >
-            {attachments.length > 0 && (
-              <div className="flex flex-col gap-2 p-2 pb-0">
-                <div className="flex gap-3 items-center">
-                  {attachments
-                    .map((att, idx) => ({ att, idx }))
-                    .map(({ att, idx }) => {
-                      const isImage = att.type === 'image'
-                      const isAudio = att.type === 'audio'
-                      const ext = att.fileType || att.mimeType?.split('/')[1]
-                      const durLabel =
-                        isAudio && typeof att.durationSec === 'number'
-                          ? `${Math.floor(att.durationSec / 60)}:${Math.floor(att.durationSec % 60)
-                              .toString()
-                              .padStart(2, '0')}`
-                          : undefined
-                      return (
-                        <div
-                          key={`${att.type}-${idx}-${att.name}`}
-                          className="relative"
-                        >
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div
-                                className={cn(
-                                  'relative border rounded-xl size-14 overflow-hidden',
-                                  'flex items-center justify-center'
-                                )}
-                              >
-                                {isImage && att.dataUrl ? (
-                                  <img
-                                    className="object-cover w-full h-full"
-                                    src={att.dataUrl}
-                                    alt={`${att.name}`}
-                                  />
-                                ) : isAudio ? (
-                                  <div className="flex flex-col items-center justify-center text-muted-foreground">
-                                    <IconMusic size={20} />
-                                    {durLabel && (
-                                      <span className="text-[10px] leading-none mt-0.5 tabular-nums opacity-70">
-                                        {durLabel}
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="flex flex-col items-center justify-center text-muted-foreground">
-                                    <IconPaperclip size={18} />
-                                    {ext && (
-                                      <span className="text-[10px] leading-none mt-0.5 uppercase opacity-70">
-                                        .{ext}
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <div className="text-xs">
-                                <div
-                                  className="font-medium truncate max-w-52"
-                                  title={att.name}
-                                >
-                                  {att.name}
-                                </div>
-                                <div className="opacity-70">
-                                  {isImage
-                                    ? att.mimeType || 'image'
-                                    : isAudio
-                                      ? att.audioFormat
-                                        ? `.${att.audioFormat}${durLabel ? ` · ${durLabel}` : ''}`
-                                        : 'audio'
-                                      : ext
-                                        ? `.${ext}`
-                                        : 'document'}
-                                  {att.size
-                                    ? ` · ${formatBytes(att.size, {
-                                        decimals: (_, unit) =>
-                                          unit === 'B' ? 0 : 1,
-                                      })}`
-                                    : ''}
-                                </div>
-                                {isAudio && att.dataUrl && (
-                                  <audio
-                                    controls
-                                    src={att.dataUrl}
-                                    className="mt-1 w-56"
-                                  />
-                                )}
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-
-                          {/* Remove button disabled while processing - outside overflow-hidden container */}
-                          {!att.processing && (
-                            <div
-                              className="absolute -top-1 -right-2.5 bg-destructive size-5 flex rounded-full items-center justify-center cursor-pointer"
-                              onClick={() => handleRemoveAttachment(idx)}
-                            >
-                              <IconX
-                                className="text-neutral-200"
-                                size={14}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                </div>
-              </div>
-            )}
+            <AttachmentThumbnailsRow
+              attachments={attachments}
+              onRemove={handleRemoveAttachment}
+            />
             {queuedMessages.length > 0 && (
               <div className="flex flex-col gap-1 px-3 pt-2 pb-0">
                 {queuedMessages.map((msg) => (
@@ -2159,169 +2005,20 @@ const ChatInput = memo(function ChatInput({
                   </Tooltip>
                 )}
 
-                {(selectedProvider === 'llamacpp') &&
-                  (() => {
-                    // Codex mode: reasoning effort (low / medium / high)
-                    if (localSelectedAgentType === 'codex') {
-                      const effortValue = codexBehavior.model_reasoning_effort
-                      const effortLabel = effortValue
-                        ? tSettings(`codex.reasoningEffort.${effortValue}`, { defaultValue: effortValue })
-                        : '—'
-                      return (
-                        <DropdownMenu>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 gap-1 px-1.5"
-                                >
-                                  <IconBrain
-                                    size={18}
-                                    className={cn(
-                                      'text-muted-foreground',
-                                      effortValue && 'text-primary'
-                                    )}
-                                  />
-                                  <span className="text-xs text-muted-foreground lowercase">
-                                    {effortLabel}
-                                  </span>
-                                </Button>
-                              </DropdownMenuTrigger>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{tSettings('codex.behavior.reasoningEffortTitle')}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <DropdownMenuContent align="start">
-                            {(['', 'low', 'medium', 'high'] as const).map((v) => (
-                              <DropdownMenuItem
-                                key={v === '' ? '__unset__' : v}
-                                onClick={() => saveCodexBehaviorField('model_reasoning_effort', v)}
-                              >
-                                {v
-                                  ? tSettings(`codex.reasoningEffort.${v}`, { defaultValue: v })
-                                  : <span className="text-muted-foreground">{tSettings('codex.notSet')}</span>}
-                                {effortValue === v && (
-                                  <span className="ml-auto text-xs text-muted-foreground">✓</span>
-                                )}
-                              </DropdownMenuItem>
-                            ))}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )
-                    }
-
-                    // Default: llamacpp reasoning auto / on / off
-                    const reasoningValue =
-                      (selectedModel?.settings?.reasoning?.controller_props
-                        ?.value as 'auto' | 'on' | 'off' | undefined) ?? 'auto'
-                    const setReasoning = (value: 'auto' | 'on' | 'off') => {
-                      if (!selectedProvider || !selectedModel) return
-                      const providerObj = getProviderByName(selectedProvider)
-                      if (!providerObj) return
-                      const modelIndex = providerObj.models.findIndex(
-                        (m) => m.id === selectedModel.id
-                      )
-                      if (modelIndex === -1) return
-                      const existing =
-                        selectedModel.settings?.reasoning ?? {
-                          key: 'reasoning',
-                          title: 'Reasoning',
-                          description: '',
-                          controller_type: 'dropdown',
-                          controller_props: { value },
-                        }
-                      const updatedModel = {
-                        ...selectedModel,
-                        settings: {
-                          ...selectedModel.settings,
-                          reasoning: {
-                            ...existing,
-                            controller_props: {
-                              ...(existing.controller_props ?? {}),
-                              value,
-                            },
-                          },
-                        },
-                      } as Model
-                      const updatedModels = [...providerObj.models]
-                      updatedModels[modelIndex] = updatedModel
-                      updateProvider(selectedProvider, {
-                        models: updatedModels,
-                      })
-                      // selectedModel is a snapshot, not a live derivation —
-                      // re-select to refresh it so the dropdown UI and the
-                      // chat transport both observe the new value.
-                      selectModelProvider(selectedProvider, selectedModel.id)
-                    }
-                    const label =
-                      reasoningValue === 'on'
-                        ? 'On'
-                        : reasoningValue === 'off'
-                          ? 'Off'
-                          : 'Auto'
-                    const tooltipText =
-                      reasoningValue === 'on'
-                        ? 'Reasoning forced on for every request.'
-                        : reasoningValue === 'off'
-                          ? 'Reasoning disabled for every request.'
-                          : "Reasoning auto-detected from the model's chat template."
-                    return (
-                      <DropdownMenu>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={`Reasoning: ${label}`}
-                              >
-                                <IconBrain
-                                  size={18}
-                                  className={cn(
-                                    'text-muted-foreground',
-                                    reasoningValue === 'on' && 'text-primary',
-                                    reasoningValue === 'off' && 'opacity-50'
-                                  )}
-                                />
-                              </Button>
-                            </DropdownMenuTrigger>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{tooltipText}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                        <DropdownMenuContent align="start">
-                          <DropdownMenuItem onClick={() => setReasoning('auto')}>
-                            Auto
-                            {reasoningValue === 'auto' && (
-                              <span className="ml-auto text-xs text-muted-foreground">
-                                ✓
-                              </span>
-                            )}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setReasoning('on')}>
-                            On
-                            {reasoningValue === 'on' && (
-                              <span className="ml-auto text-xs text-muted-foreground">
-                                ✓
-                              </span>
-                            )}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setReasoning('off')}>
-                            Off
-                            {reasoningValue === 'off' && (
-                              <span className="ml-auto text-xs text-muted-foreground">
-                                ✓
-                              </span>
-                            )}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                {selectedProvider === 'llamacpp' && (
+                  localSelectedAgentType === 'codex'
+                    ? (
+                      <CodexReasoningDropdown
+                        codexBehavior={codexBehavior}
+                        saveField={saveCodexBehaviorField}
+                      />
+                    ) : (
+                      <LlamacppReasoningDropdown
+                        selectedModel={selectedModel}
+                        selectedProvider={selectedProvider}
+                      />
                     )
-                  })()}
+                )}
               </div>
             </div>
 
@@ -2380,63 +2077,10 @@ const ChatInput = memo(function ChatInput({
       </div>
 
       {localSelectedAgentType === 'codex' && (
-        <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
-                {codexBehavior.approval_policy === 'on-failure'
-                  ? <IconTerminal2 size={14} className="text-muted-foreground" />
-                  : codexBehavior.approval_policy === 'never'
-                    ? <IconAlertCircle size={14} className="text-muted-foreground" />
-                    : <IconHandStop size={14} className="text-muted-foreground" />}
-                <span>
-                  {codexBehavior.approval_policy
-                    ? tSettings(`codex.approvalPolicy.${codexBehavior.approval_policy}`, { defaultValue: codexBehavior.approval_policy })
-                    : tSettings('codex.approvalPolicy.on-request')}
-                </span>
-                <ChevronsUpDown className="size-3 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {CODEX_APPROVAL_POLICIES.map(({ value, Icon }) => (
-                <DropdownMenuItem
-                  key={value}
-                  onClick={() => saveCodexBehaviorField('approval_policy', value)}
-                >
-                  <Icon size={14} className="text-muted-foreground" />
-                  {tSettings(`codex.approvalPolicy.${value}`)}
-                  {codexBehavior.approval_policy === value && (
-                    <span className="ml-auto text-xs text-muted-foreground">✓</span>
-                  )}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
-                <span className="text-muted-foreground">{tSettings('codex.behavior.sandboxModeTitle')}:</span>
-                <span>
-                  {codexBehavior.sandbox_mode
-                    ? tSettings(`codex.sandboxMode.${codexBehavior.sandbox_mode}`, { defaultValue: codexBehavior.sandbox_mode })
-                    : tSettings('codex.notSet')}
-                </span>
-                <ChevronsUpDown className="size-3 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              {(['', 'off', 'workspace-write', 'danger-full-computer'] as const).map((v) => (
-                <DropdownMenuItem
-                  key={v === '' ? '__unset__' : v}
-                  onClick={() => saveCodexBehaviorField('sandbox_mode', v)}
-                >
-                  {v ? tSettings(`codex.sandboxMode.${v}`, { defaultValue: v }) : <span className="text-muted-foreground">{tSettings('codex.notSet')}</span>}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        <CodexBehaviorToolbar
+          codexBehavior={codexBehavior}
+          saveField={saveCodexBehaviorField}
+        />
       )}
 
       {message && (
