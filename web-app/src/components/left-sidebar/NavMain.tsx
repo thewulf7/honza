@@ -1,5 +1,4 @@
 import { LucideIcon } from 'lucide-react'
-import { ListTodoIcon } from 'lucide-react'
 import { route } from '@/constants/routes'
 
 import {
@@ -104,12 +103,6 @@ const getNavMainItems = (
     ),
   },
   {
-    title: 'common:newTask',
-    icon: ListTodoIcon,
-    type: 'cowork',
-    onClick: onNewTask,
-  },
-  {
     title: 'common:projects.new',
     animatedIcon: FolderPlusIcon,
     type: 'chat',
@@ -184,7 +177,6 @@ function NavMainItemWithAnimatedIcon({
 export function NavMain() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { mode } = useSidebarMode()
   const { addFolder } = useThreadManagement()
   const { open: searchOpen, setOpen: setSearchOpen } = useSearchDialog()
   const { open: projectDialogOpen, setOpen: setProjectDialogOpen } =
@@ -203,7 +195,7 @@ export function NavMain() {
     () => {
       navigate({ to: route.cowork })
     }
-  ).filter((item) => !item.type || item.type === mode)
+  )
 
   const handleCreateProject = async (name: string, assistantId?: string) => {
     const newProject = await addFolder(name, assistantId)
