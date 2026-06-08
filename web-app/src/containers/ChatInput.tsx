@@ -74,7 +74,6 @@ import {
 import { ExtensionManager } from '@/lib/extension'
 import { useAttachments } from '@/hooks/useAttachments'
 import { toast } from 'sonner'
-import { isPlatformTauri } from '@/lib/platform/utils'
 import { useAttachmentIngestionPrompt } from '@/hooks/useAttachmentIngestionPrompt'
 import {
   NEW_THREAD_ATTACHMENT_KEY,
@@ -83,9 +82,7 @@ import {
 
 import {
   Attachment,
-  createImageAttachment,
   createDocumentAttachment,
-  createAudioAttachment,
 } from '@/types/attachment'
 import JanBrowserExtensionDialog from '@/containers/dialogs/JanBrowserExtensionDialog'
 import { useJanBrowserExtension } from '@/hooks/useJanBrowserExtension'
@@ -99,6 +96,7 @@ import {
   LlamacppReasoningDropdown,
 } from '@/containers/ReasoningDropdown'
 import { useCodexBehaviorState } from '@/hooks/useCodexBehaviorState'
+import { useMediaAttachments } from '@/hooks/useMediaAttachments'
 
 type ChatInputProps = {
   className?: string
@@ -197,7 +195,6 @@ const ChatInput = memo(function ChatInput({
   const [tooltipShown, setTooltipShown] = useState<
     'tools' | 'assistants' | false
   >(false)
-  const [isDragOver, setIsDragOver] = useState(false)
   const activeModels = useAppState(useShallow((state) => state.activeModels))
   const wasPointerDown = useRef(false)
 
@@ -582,9 +579,34 @@ const ChatInput = memo(function ChatInput({
     [abortControllers, cancelToolCall, onStop, selectedModel?.id, selectedProvider]
   )
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const audioInputRef = useRef<HTMLInputElement>(null)
   const audioSupported = !!selectedModel?.capabilities?.includes('audio')
+
+  const {
+    fileInputRef,
+    audioInputRef,
+    isDragOver,
+    dropAcceptsAnything,
+    processImageFiles,
+    processAudioFiles,
+    handleFileChange,
+    handleAudioFileChange,
+    openImagePicker,
+    openAudioPicker,
+    handleDragEnterOrOver,
+    handleDragLeave,
+    handleDrop,
+    handlePaste,
+  } = useMediaAttachments({
+    attachmentsKey,
+    currentThreadId,
+    hasMmproj,
+    audioSupported,
+    setAttachmentsForThread,
+    serviceHub,
+    onError: setMessage,
+    onClearError: () => setMessage(''),
+    focusInput: () => textareaRef.current?.focus(),
+  })
 
   const processNewDocumentAttachments = useCallback(
     async (docs: Attachment[]) => {
@@ -923,497 +945,6 @@ const ChatInput = memo(function ChatInput({
     )
   }
 
-  const getFileTypeFromExtension = (fileName: string): string => {
-    const extension = fileName.toLowerCase().split('.').pop()
-    switch (extension) {
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg'
-      case 'png':
-        return 'image/png'
-      default:
-        return ''
-    }
-  }
-
-  const hashBase64 = async (base64: string): Promise<string> => {
-    const binary = atob(base64)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
-  }
-
-  const processImageFiles = useCallback(async (files: File[]) => {
-    const maxSize = 10 * 1024 * 1024 // 10MB in bytes
-    const oversizedFiles: string[] = []
-    const invalidTypeFiles: string[] = []
-
-    const allowedTypes = ['image/jpg', 'image/jpeg', 'image/png']
-    const validFiles: Array<{ file: File; mimeType: string }> = []
-
-    // First pass: validate file size and type (no duplicate check yet)
-    Array.from(files).forEach((file) => {
-      if (file.size > maxSize) {
-        oversizedFiles.push(file.name)
-        return
-      }
-
-      const mimeType = getFileTypeFromExtension(file.name) || file.type
-      if (!allowedTypes.includes(mimeType)) {
-        invalidTypeFiles.push(file.name)
-        return
-      }
-
-      validFiles.push({ file, mimeType })
-    })
-
-    // Process valid files into attachments
-    const preparedFiles: Attachment[] = []
-    for (const { file, mimeType: actualType } of validFiles) {
-      const reader = new FileReader()
-      await new Promise<void>((resolve) => {
-        reader.onload = () => {
-          const result = reader.result
-          if (typeof result === 'string') {
-            const base64String = result.split(',')[1]
-            const att = createImageAttachment({
-              name: file.name,
-              size: file.size,
-              mimeType: actualType,
-              base64: base64String,
-              dataUrl: result,
-            })
-            preparedFiles.push(att)
-          }
-          resolve()
-        }
-        reader.readAsDataURL(file)
-      })
-    }
-
-    // Compute content hashes for deduplication (allows different images with same filename)
-    for (const att of preparedFiles) {
-      if (att.base64) {
-        att.contentHash = await hashBase64(att.base64)
-      }
-    }
-
-    const duplicates: string[] = []
-    const newFiles: Attachment[] = []
-
-    const currentAttachments = useChatAttachments.getState().getAttachments(
-      attachmentsKey
-    )
-
-    const existingImageHashes = new Set<string>()
-    const existingImageNames = new Set<string>()
-    for (const a of currentAttachments) {
-      if (a.type !== 'image') continue
-      if (a.contentHash) {
-        existingImageHashes.add(a.contentHash)
-      } else if (a.base64) {
-        existingImageHashes.add(await hashBase64(a.base64))
-      } else {
-        existingImageNames.add(a.name)
-      }
-    }
-
-    const seenHashesInBatch = new Set<string>()
-    for (const att of preparedFiles) {
-      const hash = att.contentHash
-      const isDuplicateByContent =
-        hash &&
-        (existingImageHashes.has(hash) || seenHashesInBatch.has(hash))
-      const isDuplicateByName =
-        existingImageNames.has(att.name)
-      if (isDuplicateByContent || isDuplicateByName) {
-        duplicates.push(att.name)
-        continue
-      }
-      if (hash) {
-        seenHashesInBatch.add(hash)
-      }
-      newFiles.push(att)
-    }
-
-    setAttachmentsForThread(attachmentsKey, (prev) =>
-      newFiles.length > 0 ? [...prev, ...newFiles] : prev
-    )
-
-    if (currentThreadId && newFiles.length > 0) {
-      void (async () => {
-        for (const img of newFiles) {
-          const matchImg = (a: Attachment) =>
-            a.type === 'image' &&
-            (img.contentHash
-              ? a.contentHash === img.contentHash
-              : a.name === img.name)
-
-          try {
-            setAttachmentsForThread(attachmentsKey, (prev) =>
-              prev.map((a) => (matchImg(a) ? { ...a, processing: true } : a))
-            )
-
-            const result = await serviceHub
-              .uploads()
-              .ingestImage(currentThreadId, img)
-
-            if (result?.id) {
-              setAttachmentsForThread(attachmentsKey, (prev) =>
-                prev.map((a) =>
-                  matchImg(a)
-                    ? { ...a, processing: false, processed: true, id: result.id }
-                    : a
-                )
-              )
-            } else {
-              throw new Error('No ID returned from image ingestion')
-            }
-          } catch (error) {
-            console.error('Failed to ingest image:', error)
-            setAttachmentsForThread(attachmentsKey, (prev) =>
-              prev.filter((a) => !matchImg(a))
-            )
-            toast.error(`Failed to ingest ${img.name}`, {
-              description:
-                error instanceof Error ? error.message : String(error),
-            })
-          }
-        }
-      })()
-    }
-
-    // Display validation errors
-    if (duplicates.length > 0) {
-      toast.warning('Some images already attached', {
-        description: `${duplicates.join(', ')} ${duplicates.length === 1 ? 'is' : 'are'} already in the list`,
-      })
-    }
-
-    const errors: string[] = []
-    if (oversizedFiles.length > 0) {
-      errors.push(
-        `File${oversizedFiles.length > 1 ? 's' : ''} too large (max 10MB): ${oversizedFiles.join(', ')}`
-      )
-    }
-
-    if (invalidTypeFiles.length > 0) {
-      errors.push(
-        `Invalid file type${invalidTypeFiles.length > 1 ? 's' : ''} (only JPEG, JPG, PNG allowed): ${invalidTypeFiles.join(', ')}`
-      )
-    }
-
-    if (errors.length > 0) {
-      setMessage(errors.join(' | '))
-      // Reset file input to allow re-uploading
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    } else {
-      setMessage('')
-    }
-  }, [attachmentsKey, currentThreadId, setAttachmentsForThread, serviceHub])
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-
-    if (files && files.length > 0) {
-      void processImageFiles(Array.from(files))
-
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    }
-
-    if (textareaRef.current) {
-      textareaRef.current.focus()
-    }
-  }
-
-  const decodeAudioDuration = (dataUrl: string): Promise<number | undefined> =>
-    new Promise((resolve) => {
-      try {
-        const audio = new Audio()
-        audio.preload = 'metadata'
-        audio.onloadedmetadata = () => {
-          const d = audio.duration
-          resolve(Number.isFinite(d) && d > 0 ? d : undefined)
-        }
-        audio.onerror = () => resolve(undefined)
-        audio.src = dataUrl
-      } catch {
-        resolve(undefined)
-      }
-    })
-
-  const processAudioFiles = useCallback(
-    async (files: File[]) => {
-      const maxBytes = 25 * 1024 * 1024
-      const oversized: string[] = []
-      const invalid: string[] = []
-      const prepared: Attachment[] = []
-
-      for (const file of Array.from(files)) {
-        const lower = file.name.toLowerCase()
-        const ext = lower.split('.').pop()
-        const isWav = file.type === 'audio/wav' || file.type === 'audio/x-wav' || ext === 'wav'
-        const isMp3 = file.type === 'audio/mpeg' || file.type === 'audio/mp3' || ext === 'mp3'
-        if (!isWav && !isMp3) {
-          invalid.push(file.name)
-          continue
-        }
-        if (file.size > maxBytes) {
-          oversized.push(file.name)
-          continue
-        }
-        const fmt: 'wav' | 'mp3' = isWav ? 'wav' : 'mp3'
-        const mimeType = fmt === 'wav' ? 'audio/wav' : 'audio/mpeg'
-        const dataUrl: string = await new Promise((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => {
-            const r = reader.result
-            if (typeof r === 'string') resolve(r)
-            else reject(new Error('read failed'))
-          }
-          reader.onerror = () => reject(reader.error ?? new Error('read failed'))
-          reader.readAsDataURL(file)
-        })
-        const base64 = dataUrl.split(',')[1] ?? ''
-        const durationSec = await decodeAudioDuration(dataUrl)
-        prepared.push(
-          createAudioAttachment({
-            name: file.name,
-            base64,
-            dataUrl,
-            mimeType,
-            audioFormat: fmt,
-            size: file.size,
-            durationSec,
-          })
-        )
-      }
-
-      const current = useChatAttachments.getState().getAttachments(attachmentsKey)
-      const existingNames = new Set(
-        current.filter((a) => a.type === 'audio').map((a) => a.name)
-      )
-      const duplicates: string[] = []
-      const newOnes: Attachment[] = []
-      for (const att of prepared) {
-        if (existingNames.has(att.name)) {
-          duplicates.push(att.name)
-          continue
-        }
-        newOnes.push(att)
-      }
-
-      if (newOnes.length > 0) {
-        setAttachmentsForThread(attachmentsKey, (prev) => [...prev, ...newOnes])
-      }
-
-      if (duplicates.length > 0) {
-        toast.warning('Some audio files already attached', {
-          description: `${duplicates.join(', ')} ${duplicates.length === 1 ? 'is' : 'are'} already in the list`,
-        })
-      }
-      const errors: string[] = []
-      if (oversized.length > 0) {
-        errors.push(
-          `Audio file${oversized.length > 1 ? 's' : ''} too large (max 25MB): ${oversized.join(', ')}`
-        )
-      }
-      if (invalid.length > 0) {
-        errors.push(
-          `Invalid audio type${invalid.length > 1 ? 's' : ''} (only WAV, MP3 allowed): ${invalid.join(', ')}`
-        )
-      }
-      if (errors.length > 0) {
-        setMessage(errors.join(' | '))
-        if (audioInputRef.current) audioInputRef.current.value = ''
-      }
-    },
-    [attachmentsKey, setAttachmentsForThread]
-  )
-
-  const handleAudioFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (files && files.length > 0) {
-      void processAudioFiles(Array.from(files))
-      if (audioInputRef.current) audioInputRef.current.value = ''
-    }
-    if (textareaRef.current) textareaRef.current.focus()
-  }
-
-  const openAudioPicker = useCallback(async () => {
-    if (isPlatformTauri()) {
-      try {
-        const selected = await serviceHub.dialog().open({
-          multiple: true,
-          filters: [{ name: 'Audio', extensions: ['wav', 'mp3'] }],
-        })
-        if (selected) {
-          const paths = Array.isArray(selected) ? selected : [selected]
-          const files: File[] = []
-          for (const path of paths) {
-            try {
-              const { convertFileSrc } = await import('@tauri-apps/api/core')
-              const fileUrl = convertFileSrc(path)
-              const response = await fetch(fileUrl)
-              if (!response.ok) throw new Error(response.statusText)
-              const blob = await response.blob()
-              const fileName = path.split(/[\\/]/).filter(Boolean).pop() || 'audio'
-              const ext = fileName.toLowerCase().split('.').pop()
-              const mimeType = ext === 'mp3' ? 'audio/mpeg' : 'audio/wav'
-              files.push(new File([blob], fileName, { type: mimeType }))
-            } catch (error) {
-              console.error('Failed to read audio file:', error)
-              toast.error('Failed to read audio file', {
-                description: error instanceof Error ? error.message : String(error),
-              })
-            }
-          }
-          if (files.length > 0) await processAudioFiles(files)
-        }
-      } catch (error) {
-        console.error('Failed to open audio dialog:', error)
-      }
-      if (textareaRef.current) textareaRef.current.focus()
-    } else {
-      audioInputRef.current?.click()
-    }
-  }, [serviceHub, processAudioFiles])
-
-  // Open the image picker dialog (extracted for reuse)
-  const openImagePicker = useCallback(async () => {
-    if (isPlatformTauri()) {
-      try {
-        const selected = await serviceHub.dialog().open({
-          multiple: true,
-          filters: [
-            {
-              name: 'Images',
-              extensions: ['jpg', 'jpeg', 'png'],
-            },
-          ],
-        })
-
-        if (selected) {
-          const paths = Array.isArray(selected) ? selected : [selected]
-          const files: File[] = []
-
-          for (const path of paths) {
-            try {
-              // Use Tauri's convertFileSrc to create a valid URL for the file
-              const { convertFileSrc } = await import('@tauri-apps/api/core')
-              const fileUrl = convertFileSrc(path)
-
-              // Fetch the file as blob
-              const response = await fetch(fileUrl)
-              if (!response.ok) {
-                throw new Error(`Failed to fetch file: ${response.statusText}`)
-              }
-
-              const blob = await response.blob()
-              const fileName =
-                path.split(/[\\/]/).filter(Boolean).pop() || 'image'
-              const ext = fileName.toLowerCase().split('.').pop()
-              const mimeType =
-                ext === 'png'
-                  ? 'image/png'
-                  : ext === 'jpg' || ext === 'jpeg'
-                    ? 'image/jpeg'
-                    : 'image/jpeg'
-
-              const file = new File([blob], fileName, { type: mimeType })
-              files.push(file)
-            } catch (error) {
-              console.error('Failed to read file:', error)
-              toast.error('Failed to read file', {
-                description:
-                  error instanceof Error ? error.message : String(error),
-              })
-            }
-          }
-
-          if (files.length > 0) {
-            await processImageFiles(files)
-          }
-        }
-      } catch (error) {
-        console.error('Failed to open file dialog:', error)
-      }
-
-      if (textareaRef.current) {
-        textareaRef.current.focus()
-      }
-    } else {
-      // Fallback to input click for web
-      fileInputRef.current?.click()
-    }
-  }, [serviceHub, processImageFiles])
-
-  const dropAcceptsAnything = hasMmproj || audioSupported
-
-  const handleDragEnterOrOver = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (dropAcceptsAnything) setIsDragOver(true)
-  }
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    // In Tauri, relatedTarget can be null when leaving the window
-    const relatedTarget = e.relatedTarget as Node | null
-    if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
-      setIsDragOver(false)
-    }
-  }
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(false)
-
-    if (!dropAcceptsAnything) return
-    if (!e.dataTransfer) {
-      console.warn('No dataTransfer available in drop event')
-      return
-    }
-
-    const dropped = Array.from(e.dataTransfer.files ?? [])
-    if (dropped.length === 0) return
-
-    const isAudioFile = (f: File) => {
-      const ext = f.name.toLowerCase().split('.').pop()
-      return (
-        f.type === 'audio/wav' ||
-        f.type === 'audio/x-wav' ||
-        f.type === 'audio/mpeg' ||
-        f.type === 'audio/mp3' ||
-        ext === 'wav' ||
-        ext === 'mp3'
-      )
-    }
-
-    const audioOnes = audioSupported ? dropped.filter(isAudioFile) : []
-    const otherOnes = dropped.filter((f) => !audioOnes.includes(f))
-
-    if (otherOnes.length > 0 && hasMmproj) {
-      const dt = new DataTransfer()
-      otherOnes.forEach((f) => dt.items.add(f))
-      const syntheticEvent = {
-        target: { files: dt.files },
-      } as React.ChangeEvent<HTMLInputElement>
-      handleFileChange(syntheticEvent)
-    }
-    if (audioOnes.length > 0) {
-      void processAudioFiles(audioOnes)
-    }
-  }
-
   const handleSelectWorkingDirectory = async () => {
     try {
       const selectedPath = await serviceHub.dialog().open({
@@ -1431,128 +962,6 @@ const ChatInput = memo(function ChatInput({
     }
   }
 
-  const handlePaste = async (e: React.ClipboardEvent) => {
-    if (audioSupported) {
-      const clipboardItems = e.clipboardData?.items
-      if (clipboardItems && clipboardItems.length > 0) {
-        const audioFiles: File[] = []
-        for (const item of Array.from(clipboardItems)) {
-          if (
-            item.type === 'audio/wav' ||
-            item.type === 'audio/x-wav' ||
-            item.type === 'audio/mpeg' ||
-            item.type === 'audio/mp3'
-          ) {
-            const f = item.getAsFile()
-            if (f) audioFiles.push(f)
-          }
-        }
-        if (audioFiles.length > 0) {
-          e.preventDefault()
-          await processAudioFiles(audioFiles)
-          return
-        }
-      }
-    }
-
-    if (hasMmproj) {
-      const clipboardItems = e.clipboardData?.items
-      let hasProcessedImage = false
-
-      // Try clipboardData.items first (traditional method)
-      if (clipboardItems && clipboardItems.length > 0) {
-        const imageItems = Array.from(clipboardItems).filter((item) =>
-          item.type.startsWith('image/')
-        )
-
-        if (imageItems.length > 0) {
-          e.preventDefault()
-
-          const files: File[] = []
-          let processedCount = 0
-
-          imageItems.forEach((item) => {
-            const file = item.getAsFile()
-            if (file) {
-              files.push(file)
-            }
-            processedCount++
-
-            // When all items are processed, handle the valid files
-            if (processedCount === imageItems.length) {
-              if (files.length > 0) {
-                const syntheticEvent = {
-                  target: {
-                    files: files,
-                  },
-                } as unknown as React.ChangeEvent<HTMLInputElement>
-
-                handleFileChange(syntheticEvent)
-                hasProcessedImage = true
-              }
-            }
-          })
-
-          // If we found image items but couldn't get files, fall through to modern API
-          if (processedCount === imageItems.length && !hasProcessedImage) {
-            // Continue to modern clipboard API fallback below
-          } else {
-            return // Successfully processed with traditional method
-          }
-        }
-      }
-
-      // Modern Clipboard API fallback (for Linux, images copied from web, etc.)
-      if (
-        navigator.clipboard &&
-        'read' in navigator.clipboard &&
-        !hasProcessedImage
-      ) {
-        try {
-          const clipboardContents = await navigator.clipboard.read()
-          const files: File[] = []
-
-          for (const item of clipboardContents) {
-            const imageTypes = item.types.filter((type) =>
-              type.startsWith('image/')
-            )
-
-            for (const type of imageTypes) {
-              try {
-                const blob = await item.getType(type)
-                // Convert blob to File with better naming
-                const extension = type.split('/')[1] || 'png'
-                const file = new File(
-                  [blob],
-                  `pasted-image-${Date.now()}.${extension}`,
-                  { type }
-                )
-                files.push(file)
-              } catch (error) {
-                console.error('Error reading clipboard item:', error)
-              }
-            }
-          }
-
-          if (files.length > 0) {
-            e.preventDefault()
-            const syntheticEvent = {
-              target: {
-                files: files,
-              },
-            } as unknown as React.ChangeEvent<HTMLInputElement>
-
-            handleFileChange(syntheticEvent)
-            return
-          }
-        } catch (error) {
-          console.error('Clipboard API access failed:', error)
-        }
-      }
-
-    }
-    // If hasMmproj is false or no images found, allow normal text pasting to continue
-  }
 
   const isStreaming = chatStatus === 'submitted' || chatStatus === 'streaming'
 
