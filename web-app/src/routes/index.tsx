@@ -2,8 +2,6 @@
 import { useEffect, useState } from 'react'
 import { createFileRoute, useSearch } from '@tanstack/react-router'
 import ChatInput from '@/containers/ChatInput'
-import DropdownAgent from '@/containers/DropdownAgent'
-import DropdownModelProvider from '@/containers/DropdownModelProvider'
 import HeaderPage from '@/containers/HeaderPage'
 import SetupScreen from '@/containers/SetupScreen'
 import { getBuiltInAgent, renderAgentTypeIcon } from '@/containers/agents/agentDefinitions'
@@ -82,15 +80,7 @@ function Index() {
 
   return (
     <div className="flex h-full flex-col justify-center">
-      <HeaderPage>
-        <div className="flex items-center gap-2 w-full">
-          <DropdownAgent
-            selectedAgentId={selectedAgentId}
-            onSelectAgent={setSelectedAgentId}
-          />
-          <DropdownModelProvider model={threadModel} />
-        </div>
-      </HeaderPage>
+      <HeaderPage />
       <div
         className={cn(
           'h-full overflow-y-auto inline-flex flex-col gap-2 justify-center px-3'
@@ -124,6 +114,7 @@ function Index() {
             model={threadModel}
             initialMessage={true}
             agentId={selectedAgentId}
+            onAgentChange={setSelectedAgentId}
           />
         </div>
       </div>

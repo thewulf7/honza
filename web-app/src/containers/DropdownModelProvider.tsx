@@ -26,6 +26,7 @@ import { useServiceHub } from '@/hooks/useServiceHub'
 import { getLastUsedModel } from '@/utils/getModelToStart'
 import { ChevronsUpDown } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
 
 type DropdownModelProviderProps = {
   model?: ThreadModel
@@ -468,50 +469,43 @@ const DropdownModelProvider = memo(function DropdownModelProvider({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
+      <div className="flex items-center gap-1">
         <PopoverTrigger asChild>
-          <div className="border relative z-20 px-4 py-1.5 flex items-center gap-1.5 rounded-full">
-            <button
-              type="button"
-              className="font-medium cursor-pointer flex items-center gap-1.5 relative z-20 min-w-0"
-            >
-              {provider && (
-                <div className="shrink-0">
-                  <ProvidersAvatar provider={provider} />
-                </div>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className={cn(
-                      'text-foreground truncate leading-normal',
-                      !selectedModel?.id && 'text-muted-foreground'
-                    )}
-                  >
-                    {displayModel}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{displayModel}</TooltipContent>
-              </Tooltip>
-              <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
-            </button>
-          {currentModel?.settings &&
-            provider &&
-            provider.provider === 'llamacpp' && (
-              <div onClick={(e) => e.stopPropagation()}>
-                <ModelSetting
-                  model={currentModel as Model}
-                  provider={provider}
-                />
-              </div>
-            )}
-          <ModelSupportStatus
-            modelId={selectedModel?.id}
-            provider={selectedProvider}
-            contextSize={getContextSize()}
-            className="ml-0.5 shrink-0"
-          />
-        </div>
+          <Button variant="outline" size="sm" className="h-7 gap-1 text-xs min-w-0 max-w-48">
+            {provider && <ProvidersAvatar provider={provider} />}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={cn(
+                    'truncate min-w-0',
+                    !selectedModel?.id && 'text-muted-foreground'
+                  )}
+                >
+                  {displayModel}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{displayModel}</TooltipContent>
+            </Tooltip>
+            <ChevronsUpDown className="size-3 shrink-0 text-muted-foreground" />
+          </Button>
         </PopoverTrigger>
+        {currentModel?.settings &&
+          provider &&
+          provider.provider === 'llamacpp' && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <ModelSetting
+                model={currentModel as Model}
+                provider={provider}
+              />
+            </div>
+          )}
+        <ModelSupportStatus
+          modelId={selectedModel?.id}
+          provider={selectedProvider}
+          contextSize={getContextSize()}
+          className="ml-0.5 shrink-0"
+        />
+      </div>
 
       <PopoverContent
         className={cn(

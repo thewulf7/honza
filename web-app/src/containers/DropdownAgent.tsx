@@ -76,25 +76,11 @@ const DropdownAgent = memo(function DropdownAgent({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <div className="border relative z-20 px-4 py-1.5 flex items-center gap-1.5 rounded-full min-w-0">
-          <button
-            type="button"
-            className="font-medium cursor-pointer flex items-center gap-1.5 relative z-20 min-w-0"
-          >
-            <div className="shrink-0">
-              {renderAgentTypeIcon(selectedAgent.agentType, 16, 'text-foreground opacity-70')}
-            </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="text-foreground truncate leading-normal">
-                  {selectedAgent.name}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{selectedAgent.name}</TooltipContent>
-            </Tooltip>
-            <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
-          </button>
-        </div>
+        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs">
+          {renderAgentTypeIcon(selectedAgent.agentType, 14, 'text-foreground opacity-70')}
+          <span className="truncate">{selectedAgent.name}</span>
+          <ChevronsUpDown className="size-3 shrink-0 text-muted-foreground" />
+        </Button>
       </PopoverTrigger>
 
       <PopoverContent

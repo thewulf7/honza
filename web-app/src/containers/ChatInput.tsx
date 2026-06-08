@@ -97,6 +97,8 @@ import {
 } from '@/containers/ReasoningDropdown'
 import { useCodexBehaviorState } from '@/hooks/useCodexBehaviorState'
 import { useMediaAttachments } from '@/hooks/useMediaAttachments'
+import DropdownAgent from '@/containers/DropdownAgent'
+import DropdownModelProvider from '@/containers/DropdownModelProvider'
 
 type ChatInputProps = {
   className?: string
@@ -111,6 +113,7 @@ type ChatInputProps = {
   onStop?: () => void
   chatStatus?: ChatStatus
   agentId?: string
+  onAgentChange?: (agentId: string) => void
 }
 
 const getAgentWorkingDirectory = () => {
@@ -141,10 +144,12 @@ const ChatInput = memo(function ChatInput({
   className,
   initialMessage,
   projectId,
+  model,
   onSubmit,
   onStop,
   chatStatus,
   agentId: agentIdProp,
+  onAgentChange,
 }: ChatInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [isFocused, setIsFocused] = useState(false)
@@ -1483,6 +1488,16 @@ const ChatInput = memo(function ChatInput({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mt-2 flex items-center gap-1.5 px-1">
+        {agentIdProp !== undefined && (
+          <DropdownAgent
+            selectedAgentId={agentIdProp ?? getLastUsedAgent()}
+            onSelectAgent={(id) => onAgentChange?.(id)}
+          />
+        )}
+        <DropdownModelProvider model={model} />
       </div>
 
       {localSelectedAgentType === 'codex' && (
