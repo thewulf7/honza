@@ -41,6 +41,7 @@ import { QueuedMessageChip } from '@/containers/QueuedMessageBubble'
 import { SamplerPopover } from '@/containers/SamplerPopover'
 import { useCodexSettings } from '@/hooks/useCodexSettings'
 import { useClaudeCodeModel } from '@/hooks/useClaudeCodeModel'
+import { useHermesSettings } from '@/hooks/useHermesSettings'
 import { useTranslation } from '@/i18n/react-i18next-compat'
 import { useGeneralSetting } from '@/hooks/useGeneralSetting'
 import { useModelProvider } from '@/hooks/useModelProvider'
@@ -232,10 +233,14 @@ const ChatInput = memo(function ChatInput({
 
   const { settings: codexSettings } = useCodexSettings()
   const { models: claudeModels } = useClaudeCodeModel()
+  const { settings: hermesSettings } = useHermesSettings()
   const allProviders = useModelProvider((state) => state.providers)
 
   const localSelectedAgentId = agentIdProp ?? getLastUsedAgent()
-  const localSelectedAgentType: AgentType = localSelectedAgentId === 'claude' ? 'claude' : 'codex'
+  const localSelectedAgentType: AgentType =
+    localSelectedAgentId === 'claude' ? 'claude' :
+    localSelectedAgentId === 'hermes' ? 'hermes' :
+    'codex'
 
   const modelLookup = useMemo(
     () => new Map(
@@ -266,11 +271,19 @@ const ChatInput = memo(function ChatInput({
         }
       })
     }
+
+    if (localSelectedAgentType === 'hermes') {
+      if (hermesSettings.model) items.push(hermesSettings.model)
+      if (hermesSettings.provider) items.push(hermesSettings.provider)
+    }
+
     return [...new Set(items.filter(Boolean))]
   }, [
     claudeModels,
     codexSettings.mcpServerNames,
     codexSettings.model,
+    hermesSettings.model,
+    hermesSettings.provider,
     modelLookup,
     localSelectedAgentType,
   ])

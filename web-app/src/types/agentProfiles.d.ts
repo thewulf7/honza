@@ -1,7 +1,7 @@
 export {}
 
 declare global {
-  type AgentType = 'codex' | 'claude'
+  type AgentType = 'codex' | 'claude' | 'hermes'
 
   interface AgentProfile {
     id: string

@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 import {
   CodexAgentSettings,
   ClaudeCodeAgentSettings,
+  HermesAgentSettings,
 } from '@/containers/agents/builtInAgentSettings'
 
 export type AgentDefinition = BuiltInAgent & {
@@ -22,6 +23,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
     description: 'Anthropic Claude Code — agentic coding with model tier setup',
     renderSettings: () => <ClaudeCodeAgentSettings />,
   },
+  {
+    id: 'hermes',
+    name: 'Hermes',
+    description: 'NousResearch Hermes Agent — agentic coding with local or remote models',
+    renderSettings: () => <HermesAgentSettings />,
+  },
 ]
 
 export const BUILT_IN_AGENTS: BuiltInAgent[] = AGENT_DEFINITIONS.map(
@@ -40,6 +47,17 @@ export function renderAgentTypeIcon(
     return (
       <img
         src="/images/codex-color.svg"
+        width={size}
+        height={size}
+        className={cn('dark:invert', className)}
+      />
+    )
+  }
+
+  if (agentType === 'hermes') {
+    return (
+      <img
+        src="/images/hermes-color.svg"
         width={size}
         height={size}
         className={cn('dark:invert', className)}

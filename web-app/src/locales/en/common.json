@@ -53,6 +53,7 @@
   "newAgentChat": "New Agent Chat",
   "codexAgent": "Codex Agent",
   "claudeAgent": "Claude Agent",
+  "hermesAgent": "Hermes Agent",
   "chats": "Chats",
   "favorites": "Favorites",
   "recents": "Recents",

@@ -24,6 +24,7 @@ import { useAppState } from '@/hooks/useAppState'
 import { useModelProvider } from '@/hooks/useModelProvider'
 import { useServiceHub } from '@/hooks/useServiceHub'
 import { useCodexSettings } from '@/hooks/useCodexSettings'
+import { useHermesSettings } from '@/hooks/useHermesSettings'
 import { useMCPServers } from '@/hooks/useMCPServers'
 import { getModelToStart } from '@/utils/getModelToStart'
 import { useClaudeCodeModel } from '@/hooks/useClaudeCodeModel'
@@ -571,6 +572,68 @@ export function ClaudeCodeAgentSettings() {
           </div>
         </div>
         {(helperModels.customCli || helperModels.envVars.length > 0) && (<div className="mt-3 text-sm text-muted-foreground">{helperModels.customCli && <div>Command: {helperModels.customCli}</div>}{helperModels.envVars.length > 0 && <div className="break-all">Env: {helperModels.envVars.map((env) => `${env.key}=******`).join(', ')}</div>}</div>)}
+      </Card>
+    </SettingsIntegrationPage>
+  )
+}
+
+export function HermesAgentSettings() {
+  const { settings, setBinaryPath, setModel, setProvider, clearSettings } = useHermesSettings()
+
+  return (
+    <SettingsIntegrationPage>
+      <div className="flex items-center justify-between">
+        <h1 className="font-medium text-base">Hermes Agent</h1>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs text-muted-foreground"
+          onClick={clearSettings}
+        >
+          Reset
+        </Button>
+      </div>
+
+      <Card>
+        <CardItem
+          title="Binary Path"
+          description="Custom path to the hermes CLI binary. Leave blank to use the system PATH."
+          column
+          actions={
+            <Input
+              value={settings.binaryPath}
+              onChange={(e) => setBinaryPath(e.target.value)}
+              placeholder="/usr/local/bin/hermes"
+              className="mt-1.5 h-8 text-sm font-mono"
+            />
+          }
+        />
+        <CardItem
+          title="Model Override"
+          description="Pass a specific model to Hermes via --model (e.g. anthropic/claude-sonnet-4-5). Leave blank to use the Hermes default."
+          column
+          actions={
+            <Input
+              value={settings.model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="e.g. openai/gpt-4o"
+              className="mt-1.5 h-8 text-sm font-mono"
+            />
+          }
+        />
+        <CardItem
+          title="Provider Override"
+          description="Pass a specific provider to Hermes via --provider (e.g. openrouter, openai). Leave blank to use the Hermes default."
+          column
+          actions={
+            <Input
+              value={settings.provider}
+              onChange={(e) => setProvider(e.target.value)}
+              placeholder="e.g. openrouter"
+              className="mt-1.5 h-8 text-sm font-mono"
+            />
+          }
+        />
       </Card>
     </SettingsIntegrationPage>
   )
