@@ -1780,6 +1780,172 @@ fn remove_from_path_windows(dir: &PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+const HERMES_JAN_ENV_MARKER: &str = "# Jan Local API Server - Hermes Config";
+const HERMES_JAN_ENV_END_MARKER: &str = "# End Jan Hermes Config";
+
+fn hermes_home_dir() -> Result<PathBuf, String> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "Could not determine home directory".to_string())?;
+    Ok(PathBuf::from(home).join(".hermes"))
+}
+
+fn hermes_replace_jan_env_block(existing: &str, api_key: &str) -> String {
+    let mut cleaned: Vec<&str> = Vec::new();
+    let mut in_block = false;
+    for line in existing.lines() {
+        if line.starts_with(HERMES_JAN_ENV_MARKER) {
+            in_block = true;
+            continue;
+        }
+        if in_block && line.starts_with(HERMES_JAN_ENV_END_MARKER) {
+            in_block = false;
+            continue;
+        }
+        if !in_block {
+            cleaned.push(line);
+        }
+    }
+    let jan_block = format!(
+        "{}\nOPENAI_API_KEY={}\n{}\n",
+        HERMES_JAN_ENV_MARKER, api_key, HERMES_JAN_ENV_END_MARKER
+    );
+    let base = cleaned.join("\n");
+    if base.trim().is_empty() {
+        jan_block
+    } else {
+        format!("{}\n{}", base.trim_end(), jan_block)
+    }
+}
+
+/// Write Jan bridge settings into `~/.hermes/config.yaml` (model section) and
+/// `~/.hermes/.env` (OPENAI_API_KEY).  Replaces any previously-written Jan
+/// block so re-saving is idempotent.
+#[tauri::command]
+pub fn write_hermes_config(
+    base_url: String,
+    api_key: Option<String>,
+    model: Option<String>,
+) -> Result<(), String> {
+    let hermes_dir = hermes_home_dir()?;
+    fs::create_dir_all(&hermes_dir).map_err(|e| e.to_string())?;
+
+    let config_path = hermes_dir.join("config.yaml");
+
+    let mut config: serde_yaml::Value = if config_path.exists() {
+        let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str(&content)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()))
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+
+    {
+        let mapping = config
+            .as_mapping_mut()
+            .ok_or_else(|| "config.yaml root is not a YAML mapping".to_string())?;
+
+        let mut model_map = serde_yaml::Mapping::new();
+        model_map.insert(
+            serde_yaml::Value::String("base_url".into()),
+            serde_yaml::Value::String(base_url.clone()),
+        );
+        model_map.insert(
+            serde_yaml::Value::String("provider".into()),
+            serde_yaml::Value::String("custom".into()),
+        );
+        if let Some(m) = model.as_deref().filter(|v| !v.trim().is_empty()) {
+            model_map.insert(
+                serde_yaml::Value::String("default".into()),
+                serde_yaml::Value::String(m.to_string()),
+            );
+        }
+        mapping.insert(
+            serde_yaml::Value::String("model".into()),
+            serde_yaml::Value::Mapping(model_map),
+        );
+    }
+
+    let yaml_str = serde_yaml::to_string(&config).map_err(|e| e.to_string())?;
+    fs::write(&config_path, yaml_str).map_err(|e| e.to_string())?;
+
+    // Write API key into .env
+    let env_path = hermes_dir.join(".env");
+    let existing_env = if env_path.exists() {
+        fs::read_to_string(&env_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let key_value = api_key.unwrap_or_else(|| "jan".to_string());
+    let new_env = hermes_replace_jan_env_block(&existing_env, &key_value);
+    fs::write(&env_path, new_env).map_err(|e| e.to_string())?;
+
+    log::info!(
+        "Hermes bridge configured: base_url={}, model={:?}",
+        base_url,
+        model
+    );
+    Ok(())
+}
+
+/// Remove Jan-written keys from `~/.hermes/config.yaml` and strip the Jan
+/// block from `~/.hermes/.env`, restoring both files to their pre-bridge state.
+#[tauri::command]
+pub fn clear_hermes_config() -> Result<(), String> {
+    let hermes_dir = hermes_home_dir()?;
+
+    let config_path = hermes_dir.join("config.yaml");
+    if config_path.exists() {
+        let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+        if let Ok(mut config) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(mapping) = config.as_mapping_mut() {
+                let model_key = serde_yaml::Value::String("model".into());
+                let should_remove = if let Some(model_val) = mapping.get_mut(&model_key) {
+                    if let Some(model_map) = model_val.as_mapping_mut() {
+                        model_map.remove(&serde_yaml::Value::String("base_url".into()));
+                        model_map.remove(&serde_yaml::Value::String("provider".into()));
+                        model_map.remove(&serde_yaml::Value::String("default".into()));
+                        model_map.is_empty()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if should_remove {
+                    mapping.remove(&model_key);
+                }
+            }
+            let yaml_str = serde_yaml::to_string(&config).map_err(|e| e.to_string())?;
+            fs::write(&config_path, yaml_str).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let env_path = hermes_dir.join(".env");
+    if env_path.exists() {
+        let content = fs::read_to_string(&env_path).unwrap_or_default();
+        let mut cleaned: Vec<&str> = Vec::new();
+        let mut in_block = false;
+        for line in content.lines() {
+            if line.starts_with(HERMES_JAN_ENV_MARKER) {
+                in_block = true;
+                continue;
+            }
+            if in_block && line.starts_with(HERMES_JAN_ENV_END_MARKER) {
+                in_block = false;
+                continue;
+            }
+            if !in_block {
+                cleaned.push(line);
+            }
+        }
+        fs::write(&env_path, cleaned.join("\n")).map_err(|e| e.to_string())?;
+    }
+
+    log::info!("Hermes bridge config cleared");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

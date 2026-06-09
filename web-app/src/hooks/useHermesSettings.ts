@@ -9,12 +9,15 @@ export interface HermesSettings {
   model: string
   /** Provider override passed via `--provider`. Empty string → Hermes default. */
   provider: string
+  /** Model selected for the Jan bridge integration (written to config.yaml). */
+  bridgeModel: string
 }
 
 const DEFAULT_SETTINGS: HermesSettings = {
   binaryPath: '',
   model: '',
   provider: '',
+  bridgeModel: '',
 }
 
 function loadFromStorage(): HermesSettings {
@@ -28,6 +31,7 @@ function loadFromStorage(): HermesSettings {
           binaryPath: typeof parsed.binaryPath === 'string' ? parsed.binaryPath : '',
           model: typeof parsed.model === 'string' ? parsed.model : '',
           provider: typeof parsed.provider === 'string' ? parsed.provider : '',
+          bridgeModel: typeof parsed.bridgeModel === 'string' ? parsed.bridgeModel : '',
         }
       }
     }
@@ -72,10 +76,18 @@ export function useHermesSettings() {
     })
   }, [])
 
+  const setBridgeModel = useCallback((bridgeModel: string) => {
+    setSettings((prev) => {
+      const next = { ...prev, bridgeModel }
+      saveToStorage(next)
+      return next
+    })
+  }, [])
+
   const clearSettings = useCallback(() => {
     setSettings(DEFAULT_SETTINGS)
     saveToStorage(DEFAULT_SETTINGS)
   }, [])
 
-  return { settings, setBinaryPath, setModel, setProvider, clearSettings }
+  return { settings, setBinaryPath, setModel, setProvider, setBridgeModel, clearSettings }
 }

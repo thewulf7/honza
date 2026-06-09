@@ -578,21 +578,141 @@ export function ClaudeCodeAgentSettings() {
 }
 
 export function HermesAgentSettings() {
-  const { settings, setBinaryPath, setModel, setProvider, clearSettings } = useHermesSettings()
+  const { settings, setBinaryPath, setModel, setProvider, setBridgeModel, clearSettings } = useHermesSettings()
+  const serviceHub = useServiceHub()
+  const {
+    corsEnabled,
+    verboseLogs,
+    serverHost,
+    serverPort,
+    setServerPort,
+    apiPrefix,
+    apiKey,
+    trustedHosts,
+    proxyTimeout,
+    setLastServerModels,
+  } = useLocalApiServer()
+  const { serverStatus, setServerStatus } = useAppState()
+  const { providers, selectedModel, selectedProvider, getProviderByName } = useModelProvider()
+  const setActiveModels = useAppState((state) => state.setActiveModels)
+  const [isSaving, setIsSaving] = useState(false)
+
+  const ensureServerReady = async (): Promise<void> => {
+    const fallbackModel = getModelToStart({ selectedModel, selectedProvider, getProviderByName })?.model
+    const targetModel = settings.bridgeModel || fallbackModel || null
+    const loadedModels = (await serviceHub.models().getActiveModels()) || []
+    if (targetModel && !loadedModels.includes(targetModel)) {
+      const providerWithModel = providers.find((p) => p.models.some((m) => m.id === targetModel))
+      if (providerWithModel) {
+        await serviceHub.models().startModel(providerWithModel, targetModel, true)
+        await serviceHub.models().getActiveModels().then((models) => setActiveModels(models || []))
+      }
+    }
+    let actualPort: number | undefined
+    try {
+      actualPort = await window.core?.api?.startServer({
+        host: serverHost,
+        port: serverPort,
+        prefix: apiPrefix,
+        apiKey,
+        trustedHosts,
+        isCorsEnabled: corsEnabled,
+        isVerboseEnabled: verboseLogs,
+        proxyTimeout,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes('already running')) throw error
+    }
+    if (actualPort && actualPort !== serverPort) {
+      setServerPort(actualPort)
+    }
+    setServerStatus('running')
+    const activeModels = await serviceHub.models().getActiveModels().catch(() => [] as string[])
+    if (activeModels.length > 0) {
+      const serverModels = activeModels.flatMap((id) => {
+        const p = providers.find((item) => item?.models?.some((m) => m.id === id))
+        return p ? [{ model: id, provider: p.provider }] : []
+      })
+      if (serverModels.length > 0) setLastServerModels(serverModels)
+    }
+  }
+
+  const handleSave = async () => {
+    try {
+      setIsSaving(true)
+      if (serverStatus === 'stopped') {
+        toast.info('Starting server...', { description: 'Preparing server for Hermes' })
+      }
+      await ensureServerReady()
+      await invoke('write_hermes_config', {
+        baseUrl: `http://${serverHost}:${serverPort}${apiPrefix}`,
+        apiKey: apiKey || null,
+        model: settings.bridgeModel || null,
+      })
+      toast.success('Hermes configured to use Jan via config.yaml')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error('Failed to configure Hermes', { description: message })
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleReset = async () => {
+    try {
+      await invoke('clear_hermes_config')
+      clearSettings()
+      toast.success('Hermes settings cleared')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error('Failed to clear Hermes config', { description: message })
+    }
+  }
 
   return (
     <SettingsIntegrationPage>
-      <div className="flex items-center justify-between">
-        <h1 className="font-medium text-base">Hermes Agent</h1>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 text-xs text-muted-foreground"
-          onClick={clearSettings}
-        >
-          Reset
-        </Button>
-      </div>
+      <Card
+        header={
+          <div className="mb-3 flex w-full items-center gap-3">
+            <img src="/images/hermes-color.svg" width={20} height={20} className="shrink-0 dark:invert" />
+            <h1 className="text-foreground font-medium text-base">Hermes integration</h1>
+          </div>
+        }
+      >
+        <CardItem
+          title="Model"
+          description="Hermes"
+          actions={
+            <IntegrationModelSelector
+              providers={providers}
+              selectedModel={settings.bridgeModel}
+              onSelect={(id) => setBridgeModel(id ?? '')}
+              placeholder="Select model"
+              allowEmptyOption
+              showSize
+            />
+          }
+          descriptionOutside={
+            <JanCodeRecommendation
+              selectedModel={settings.bridgeModel}
+              onSelect={(id) => setBridgeModel(id)}
+            />
+          }
+        />
+        <div className="flex mt-2 justify-end gap-2 border-t pt-4">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleReset}
+          >
+            Reset
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={isSaving}>
+            {isSaving ? 'Saving...' : 'Save & Enable'}
+          </Button>
+        </div>
+      </Card>
 
       <Card>
         <CardItem

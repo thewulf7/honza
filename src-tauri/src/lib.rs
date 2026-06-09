@@ -78,6 +78,8 @@ macro_rules! invoke_commands_with_extras {
         core::system::claude_code_agent::claude_stop_turn,
         core::system::hermes_agent::hermes_run_turn,
         core::system::hermes_agent::hermes_stop_turn,
+        core::system::commands::write_hermes_config,
+        core::system::commands::clear_hermes_config,
         // Server commands
         core::server::commands::start_server,
         core::server::commands::stop_server,
