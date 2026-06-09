@@ -1,37 +1,32 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { route } from '@/constants/routes'
 import HeaderPage from '@/containers/HeaderPage'
-import { useServiceHub } from '@/hooks/useServiceHub'
-import { useHardware } from '@/hooks/useHardware'
 import { useModelProvider } from '@/hooks/useModelProvider'
-import { selectBestGgufVariant } from '@/lib/modelQuantization'
+import { useDiscoverStore, type DiscoverEntry } from '@/hooks/useDiscoverStore'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/i18n/react-i18next-compat'
 import {
   IconCheck,
-  IconCpu,
+  IconClock,
   IconDownload,
   IconLoader2,
+  IconRefresh,
   IconSparkles,
-  IconZip,
+  IconZap,
 } from '@tabler/icons-react'
-import { useCallback, useState } from 'react'
-import type { CatalogModel, ModelQuant, ModelScore } from '@/services/models/types'
+import { useMemo, useState } from 'react'
+import type { CatalogModel } from '@/services/models/types'
+import { cn } from '@/lib/utils'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const Route = createFileRoute(route.discover as any)({
   component: DiscoverContent,
 })
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Filter types ──────────────────────────────────────────────────────────────
 
-type Phase = 'idle' | 'scanning' | 'done'
-
-interface ScoredModel {
-  model: CatalogModel
-  variant: ModelQuant | undefined
-  score: ModelScore
-}
+type FitFilter = 'all' | string  // 'Perfect' | 'Good' | 'Marginal' | 'Too Large'
+type ModeFilter = 'all' | string // 'GPU' | 'CPU' | 'Hybrid'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,13 +39,29 @@ function fitLevelColor(level: string) {
   }
 }
 
-function fitLevelBg(level: string) {
+function fitLevelBg(level: string, active = false) {
+  if (active) {
+    switch (level) {
+      case 'Perfect': return 'bg-green-600 text-white dark:bg-green-500'
+      case 'Good': return 'bg-blue-600 text-white dark:bg-blue-500'
+      case 'Marginal': return 'bg-amber-600 text-white dark:bg-amber-500'
+      default: return 'bg-red-600 text-white dark:bg-red-500'
+    }
+  }
   switch (level) {
     case 'Perfect': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
     case 'Good': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400'
     case 'Marginal': return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
     default: return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400'
   }
+}
+
+function formatAge(ms: number): string {
+  const mins = Math.floor(ms / 60_000)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
 }
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
@@ -67,18 +78,17 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
   )
 }
 
-function CatalogModelCard({
-  item,
-  installedModelIds,
+function ModelCard({
+  entry,
+  isInstalled,
   onDownload,
 }: {
-  item: ScoredModel
-  installedModelIds: Set<string>
+  entry: DiscoverEntry
+  isInstalled: boolean
   onDownload: (model: CatalogModel) => void
 }) {
-  const { model, variant, score } = item
+  const { model, score } = entry
   const bd = score.breakdown
-  const isInstalled = variant ? installedModelIds.has(variant.model_id) : false
   const displayName = model.display_name ?? model.model_name.split('/').pop() ?? model.model_name
 
   return (
@@ -104,7 +114,7 @@ function CatalogModelCard({
           <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
             {bd?.run_mode && (
               <span className="flex items-center gap-1">
-                <IconZip size={10} />{bd.run_mode}
+                <IconZap size={10} />{bd.run_mode}
               </span>
             )}
             {score.estimated_tps > 0 && <span>~{Math.round(score.estimated_tps)} t/s</span>}
@@ -144,19 +154,44 @@ function CatalogModelCard({
   )
 }
 
+// ── Filter chip ───────────────────────────────────────────────────────────────
+
+function FilterChip({
+  label,
+  active,
+  colorClass,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  colorClass?: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'text-xs px-2.5 py-1 rounded-full border font-medium transition-colors',
+        active
+          ? colorClass ?? 'bg-foreground text-background border-foreground'
+          : 'bg-background text-muted-foreground border-border hover:border-foreground/40 hover:text-foreground'
+      )}
+    >
+      {label}
+    </button>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 function DiscoverContent() {
   const { t } = useTranslation()
-  const serviceHub = useServiceHub()
   const navigate = useNavigate()
   const { providers } = useModelProvider()
-  const { hardwareData } = useHardware()
+  const { top20, phase, scored, total, cachedAt, scan } = useDiscoverStore()
 
-  const [phase, setPhase] = useState<Phase>('idle')
-  const [scored, setScored] = useState(0)
-  const [total, setTotal] = useState(0)
-  const [results, setResults] = useState<ScoredModel[]>([])
+  const [fitFilter, setFitFilter] = useState<FitFilter>('all')
+  const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
 
   const installedModelIds = new Set(
     (providers.find(p => p.provider === 'llamacpp')?.models ?? []).flatMap(m => {
@@ -165,64 +200,30 @@ function DiscoverContent() {
     })
   )
 
-  const runScan = useCallback(async () => {
-    setPhase('scanning')
-    setScored(0)
-    setTotal(0)
-    setResults([])
-    try {
-      const catalog = await serviceHub.models().fetchModelCatalog()
-      const scoreable = catalog.filter(m => (m.quants?.length ?? 0) > 0)
-      setTotal(scoreable.length)
-
-      const acc: ScoredModel[] = []
-      const BATCH = 8
-      for (let i = 0; i < scoreable.length; i += BATCH) {
-        const batch = scoreable.slice(i, i + BATCH)
-        const batchResults = await Promise.all(
-          batch.map(async model => {
-            try {
-              const variant = selectBestGgufVariant(model.quants)
-              const score = await serviceHub.models().getHubModelScore(model, variant)
-              return { model, variant, score } satisfies ScoredModel
-            } catch {
-              return null
-            } finally {
-              setScored(n => n + 1)
-            }
-          })
-        )
-        for (const r of batchResults) {
-          if (r && r.score.status === 'ready' && (r.score.overall ?? 0) > 0) {
-            acc.push(r)
-            setResults([...acc].sort((a, b) => (b.score.overall ?? 0) - (a.score.overall ?? 0)))
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Catalog scan failed', e)
-    }
-    setPhase('done')
-  }, [serviceHub])
-
-  const handleDownload = useCallback(
-    (model: CatalogModel) => {
-      navigate({ to: route.hub.model, params: { modelId: model.model_name } })
-    },
-    [navigate]
+  // Collect unique filter values from results
+  const fitLevels = useMemo(
+    () => [...new Set(top20.map(e => e.score.breakdown?.fit_level).filter(Boolean) as string[])],
+    [top20]
+  )
+  const runModes = useMemo(
+    () => [...new Set(top20.map(e => e.score.breakdown?.run_mode).filter(Boolean) as string[])],
+    [top20]
   )
 
-  const progressPct = total > 0 ? Math.round((scored / total) * 100) : 0
+  const filtered = useMemo(() => {
+    let list = top20
+    if (fitFilter !== 'all') list = list.filter(e => e.score.breakdown?.fit_level === fitFilter)
+    if (modeFilter !== 'all') list = list.filter(e => e.score.breakdown?.run_mode === modeFilter)
+    return list
+  }, [top20, fitFilter, modeFilter])
 
-  const gpuLabel = hardwareData.gpus?.length > 0
-    ? `${hardwareData.gpus[0].name}${hardwareData.gpus[0].total_memory ? ' · ' + Math.round(hardwareData.gpus[0].total_memory / 1024) + ' GB VRAM' : ''}`
-    : null
-  const cpuLabel = hardwareData.cpu?.name
-    ? `${hardwareData.cpu.name}${hardwareData.cpu.core_count ? ' · ' + hardwareData.cpu.core_count + ' cores' : ''}`
-    : null
-  const ramLabel = hardwareData.total_memory
-    ? `${Math.round(hardwareData.total_memory / 1024)} GB RAM`
-    : null
+  const handleDownload = (model: CatalogModel) => {
+    navigate({ to: route.hub.model, params: { modelId: model.model_name } })
+  }
+
+  const progressPct = total > 0 ? Math.round((scored / total) * 100) : 0
+  const isScanning = phase === 'scanning'
+  const cacheAge = cachedAt ? Date.now() - cachedAt : null
 
   return (
     <div className="flex flex-col h-svh w-full">
@@ -232,22 +233,29 @@ function DiscoverContent() {
             <div className="flex items-center gap-2">
               <IconSparkles size={16} className="text-muted-foreground shrink-0" />
               <span className="font-medium text-sm">{t('common:discover')}</span>
+              {cacheAge !== null && !isScanning && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <IconClock size={11} />
+                  {formatAge(cacheAge)}
+                </span>
+              )}
             </div>
             <Button
+              variant="ghost"
               size="sm"
-              onClick={runScan}
-              disabled={phase === 'scanning'}
+              onClick={() => scan()}
+              disabled={isScanning}
               className="gap-1.5 shrink-0"
             >
-              {phase === 'scanning' ? (
+              {isScanning ? (
                 <>
                   <IconLoader2 size={14} className="animate-spin" />
                   {total > 0 ? `${scored}/${total}` : 'Scanning…'}
                 </>
               ) : (
                 <>
-                  <IconSparkles size={14} />
-                  {phase === 'done' ? 'Re-scan' : 'Scan for me'}
+                  <IconRefresh size={14} />
+                  Rescan
                 </>
               )}
             </Button>
@@ -257,31 +265,10 @@ function DiscoverContent() {
         <div className="flex-1 overflow-y-auto p-4">
           <div className="flex flex-col gap-4 w-full xl:w-4/6 mx-auto">
 
-            {/* Hardware context */}
-            {(gpuLabel || cpuLabel || ramLabel) && (
-              <div className="flex items-center gap-2 flex-wrap">
-                {gpuLabel && (
-                  <div className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                    <IconZip size={11} />{gpuLabel}
-                  </div>
-                )}
-                {cpuLabel && (
-                  <div className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                    <IconCpu size={11} />{cpuLabel}
-                  </div>
-                )}
-                {ramLabel && (
-                  <div className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                    {ramLabel}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Progress bar */}
-            {phase === 'scanning' && total > 0 && (
+            {/* Progress bar while scanning */}
+            {isScanning && total > 0 && (
               <div className="space-y-1">
-                <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
                   <div
                     className="h-full bg-primary rounded-full transition-all duration-300"
                     style={{ width: `${progressPct}%` }}
@@ -293,32 +280,93 @@ function DiscoverContent() {
               </div>
             )}
 
+            {/* Filters — only shown when we have results */}
+            {top20.length > 0 && (
+              <div className="space-y-2">
+                {fitLevels.length > 1 && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-muted-foreground shrink-0">Fit:</span>
+                    <FilterChip
+                      label="All"
+                      active={fitFilter === 'all'}
+                      onClick={() => setFitFilter('all')}
+                    />
+                    {fitLevels.map(level => (
+                      <FilterChip
+                        key={level}
+                        label={level}
+                        active={fitFilter === level}
+                        colorClass={fitLevelBg(level, true)}
+                        onClick={() => setFitFilter(fitFilter === level ? 'all' : level)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {runModes.length > 1 && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-muted-foreground shrink-0">Mode:</span>
+                    <FilterChip
+                      label="All"
+                      active={modeFilter === 'all'}
+                      onClick={() => setModeFilter('all')}
+                    />
+                    {runModes.map(mode => (
+                      <FilterChip
+                        key={mode}
+                        label={mode}
+                        active={modeFilter === mode}
+                        onClick={() => setModeFilter(modeFilter === mode ? 'all' : mode)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Results */}
-            {results.length > 0 && (
+            {filtered.length > 0 && (
               <div className="space-y-3">
-                {results.map(item => (
-                  <CatalogModelCard
-                    key={item.model.model_name}
-                    item={item}
-                    installedModelIds={installedModelIds}
+                {filtered.map(entry => (
+                  <ModelCard
+                    key={entry.model.model_name}
+                    entry={entry}
+                    isInstalled={
+                      entry.variant
+                        ? installedModelIds.has(entry.variant.model_id)
+                        : false
+                    }
                     onDownload={handleDownload}
                   />
                 ))}
               </div>
             )}
 
-            {/* Empty states */}
-            {phase === 'idle' && (
+            {/* Empty / idle states */}
+            {phase === 'idle' && top20.length === 0 && (
               <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
                 <IconSparkles size={40} className="text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground max-w-xs">
-                  Scan your hardware to discover which catalog models fit best — scored by quality, speed, and memory fit.
+                  Scanning catalog against your hardware in the background…
                 </p>
               </div>
             )}
-            {phase === 'done' && results.length === 0 && (
+
+            {isScanning && top20.length === 0 && (
+              <div className="flex items-center justify-center py-20 gap-2 text-sm text-muted-foreground">
+                <IconLoader2 size={16} className="animate-spin" />
+                Scoring models for your hardware…
+              </div>
+            )}
+
+            {phase === 'done' && filtered.length === 0 && top20.length > 0 && (
               <p className="text-sm text-muted-foreground py-8 text-center">
-                No models could be scored. Check your internet connection.
+                No models match the current filters.
+              </p>
+            )}
+
+            {phase === 'done' && top20.length === 0 && (
+              <p className="text-sm text-muted-foreground py-8 text-center">
+                No models could be scored. Check your internet connection and try rescanning.
               </p>
             )}
           </div>

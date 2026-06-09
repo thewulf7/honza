@@ -17,6 +17,7 @@ import { AppEvent, events } from '@janhq/core'
 import { SystemEvent } from '@/types/events'
 import { isDev } from '@/lib/utils'
 import { invoke } from '@tauri-apps/api/core'
+import { useDiscoverStore } from '@/hooks/useDiscoverStore'
 import { providerHasRemoteApiKeys, providerRemoteApiKeyChain } from '@/lib/provider-api-keys'
 
 type ProviderCustomHeader = {
@@ -248,6 +249,15 @@ export function DataProvider() {
       })
     })
   }, [serviceHub, setProviders])
+
+  // Kick off discover catalog scan in background after initial app load
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      useDiscoverStore.getState().initIfStale()
+    }, 3000)
+    return () => window.clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Auto-start Local API Server on app startup if enabled
   useEffect(() => {
