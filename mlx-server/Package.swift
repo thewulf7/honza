@@ -13,8 +13,6 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.3")),
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
-        .package(url: "https://github.com/DePasqualeOrg/swift-tokenizers-mlx", from: "0.3.0"),
-        .package(url: "https://github.com/DePasqualeOrg/swift-tokenizers", .upToNextMinor(from: "0.5.0")),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.7.0"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.19.0"),
@@ -29,7 +27,6 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
-                .product(name: "MLXLMTokenizers", package: "swift-tokenizers-mlx"),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Hummingbird", package: "hummingbird"),
             ],
