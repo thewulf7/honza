@@ -12,7 +12,7 @@ import {
   IconLoader2,
   IconRefresh,
   IconSparkles,
-  IconZap,
+  IconBolt,
 } from '@tabler/icons-react'
 import { useMemo, useState } from 'react'
 import type { CatalogModel } from '@/services/models/types'
@@ -114,7 +114,7 @@ function ModelCard({
           <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
             {bd?.run_mode && (
               <span className="flex items-center gap-1">
-                <IconZap size={10} />{bd.run_mode}
+                <IconBolt size={10} />{bd.run_mode}
               </span>
             )}
             {score.estimated_tps > 0 && <span>~{Math.round(score.estimated_tps)} t/s</span>}
