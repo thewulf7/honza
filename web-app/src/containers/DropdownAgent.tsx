@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { useNavigate } from '@tanstack/react-router'
 import { ChevronsUpDown } from 'lucide-react'

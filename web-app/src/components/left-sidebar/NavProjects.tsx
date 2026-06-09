@@ -98,7 +98,7 @@ export function NavProjects() {
   const { t } = useTranslation()
   const { isMobile } = useSidebar()
   const { folders, updateFolder } = useThreadManagement()
-  const { open: projectDialogOpen, setOpen: setProjectDialogOpen } = useProjectDialog()
+  const { setOpen: setProjectDialogOpen } = useProjectDialog()
 
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)

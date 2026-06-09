@@ -10,7 +10,6 @@ import {
 } from '@tabler/icons-react'
 import { useCallback, useRef, useState } from 'react'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { useServiceHub } from '@/hooks/useServiceHub'

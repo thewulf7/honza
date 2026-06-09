@@ -604,8 +604,6 @@ const ChatInput = memo(function ChatInput({
     audioInputRef,
     isDragOver,
     dropAcceptsAnything,
-    processImageFiles,
-    processAudioFiles,
     handleFileChange,
     handleAudioFileChange,
     openImagePicker,
