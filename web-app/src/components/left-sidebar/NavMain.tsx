@@ -31,6 +31,7 @@ import { BlocksIcon, type BlocksIconHandle } from '../animated-icon/blocks'
 import {
   type BotIconHandle,
 } from '@/components/animated-icon/bot'
+import { IconSparkles } from '@tabler/icons-react'
 import AddProjectDialog from '@/containers/dialogs/AddProjectDialog'
 import { SearchDialog } from '@/containers/dialogs/SearchDialog'
 import { useThreadManagement } from '@/hooks/useThreadManagement'
@@ -98,6 +99,11 @@ const getNavMainItems = (
     title: 'common:hub',
     url: route.hub.index,
     animatedIcon: BlocksIcon,
+  },
+  {
+    title: 'common:discover',
+    url: route.discover,
+    icon: IconSparkles,
   },
   {
     title: 'common:settings',

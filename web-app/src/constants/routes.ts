@@ -23,6 +23,7 @@ export const route = {
     agents: '/settings/agents',
     agentDetail: '/settings/agents/$agentName',
   },
+  discover: '/discover',
   hub: {
     index: '/hub/',
     model: '/hub/$modelId',
