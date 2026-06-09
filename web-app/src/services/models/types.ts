@@ -148,6 +148,48 @@ export type HubScoreRequestSource = {
   total_size_bytes?: number
 }
 
+export type AdvisorSeverity = 'improvement' | 'warning' | 'info'
+
+export interface AdvisorSuggestion {
+  yamlKey: string
+  displayName: string
+  currentValue: string | number | boolean | null
+  suggestedValue: string | number | boolean | null
+  reason: string
+  severity: AdvisorSeverity
+  canApply: boolean
+}
+
+export interface ConfigAnalysis {
+  modelId: string
+  hardware: {
+    gpus: Array<{ name: string; vramMB: number }>
+    cpuName: string
+    cpuCores: number
+    totalRamMB: number
+    primaryVramMB: number
+    hasGpu: boolean
+  }
+  model: {
+    arch: string
+    quantName: string
+    nLayers: number
+    trainedCtxLen: number
+    fileSizeMB: number
+  }
+  currentConfig: {
+    n_gpu_layers: number | null
+    flash_attn: string | null
+    cache_type_k: string
+    cache_type_v: string
+    ctx_size: number
+    cont_batching: boolean
+  }
+  suggestions: AdvisorSuggestion[]
+  routerPort: number | null
+  routerApiKey: string | null
+}
+
 export interface ModelsService {
   getModel(modelId: string): Promise<modelInfo | undefined>
   fetchModels(): Promise<modelInfo[]>
@@ -233,4 +275,9 @@ export interface ModelsService {
   ): Promise<ModelScore>
   validateGgufFile(filePath: string): Promise<ModelValidationResult>
   getTokensCount(modelId: string, messages: ThreadMessage[]): Promise<number>
+  analyzeConfig(modelId: string): Promise<ConfigAnalysis | null>
+  applyAdvisorSuggestions(
+    modelId: string,
+    patch: Record<string, string | number | boolean | null>
+  ): Promise<void>
 }

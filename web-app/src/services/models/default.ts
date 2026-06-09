@@ -648,6 +648,35 @@ export class DefaultModelsService implements ModelsService {
     }
   }
 
+  async analyzeConfig(modelId: string) {
+    try {
+      const engine = this.getEngine('llamacpp') as AIEngine & {
+        analyzeConfig?: (id: string) => Promise<unknown>
+      }
+      if (engine && typeof engine.analyzeConfig === 'function') {
+        return (await engine.analyzeConfig(modelId)) as import('./types').ConfigAnalysis | null
+      }
+    } catch (error) {
+      console.error(`Error analysing config for ${modelId}:`, error)
+    }
+    return null
+  }
+
+  async applyAdvisorSuggestions(
+    modelId: string,
+    patch: Record<string, string | number | boolean | null>
+  ): Promise<void> {
+    const engine = this.getEngine('llamacpp') as AIEngine & {
+      applyAdvisorSuggestions?: (
+        id: string,
+        p: Record<string, string | number | boolean | null>
+      ) => Promise<void>
+    }
+    if (engine && typeof engine.applyAdvisorSuggestions === 'function') {
+      await engine.applyAdvisorSuggestions(modelId, patch)
+    }
+  }
+
   async updateModelSettings(
     modelId: string,
     patch: Record<string, string | number | boolean | null | undefined>

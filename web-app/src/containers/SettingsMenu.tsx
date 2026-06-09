@@ -16,6 +16,7 @@ import {
   IconCpu,
   IconWorld,
   IconPaperclip,
+  IconWand,
 } from '@tabler/icons-react'
 import { useMatches, useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
@@ -203,6 +204,11 @@ const SettingsMenu = () => {
       hasSubMenu: false,
       isEnabled: true,
       icon: IconCpu,
+    },
+    {
+      title: 'common:modelOptimizer',
+      route: route.settings.model_optimizer,
+      icon: IconWand,
     },
     { title: 'common:privacy', route: route.settings.privacy, icon: IconLock },
   ]

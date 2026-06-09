@@ -1,6 +1,7 @@
 {
   "assistants": "Assistants",
   "hardware": "Hardware",
+  "modelOptimizer": "Model Optimizer",
   "mcp-servers": "MCP Servers",
   "local_api_server": "Local API Server",
   "remote_access": "Remote Access",

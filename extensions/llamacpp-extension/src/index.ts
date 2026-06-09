@@ -54,6 +54,12 @@ import {
   type EmbedBatchResult,
 } from './util'
 import { generatePreset, MTP_MIN_BUILD } from './preset'
+import {
+  analyzeModelConfig,
+  patchModelYaml,
+  type ConfigAnalysis,
+  type ConfigSuggestion,
+} from './config-advisor'
 import { basename } from '@tauri-apps/api/path'
 import {
   loadLlamaModel,
@@ -3171,6 +3177,48 @@ export default class llamacpp_extension extends AIEngine {
       await this.startRouter()
     } catch (e) {
       logger.warn(`Failed to restart router after MTP update for ${modelId}`, e)
+    }
+  }
+
+  /**
+   * Analyse the current llama.cpp config for `modelId` and return rule-based
+   * suggestions (ngl, flash-attn, KV cache quant, context length awareness).
+   */
+  async analyzeConfig(modelId: string): Promise<ConfigAnalysis | null> {
+    const providerPath = await this.getProviderPath()
+    const janDataFolderPath = await getJanDataFolderPath()
+    const routerInfo = await this.getRouterInfo()
+    const cfg = this.config
+    return analyzeModelConfig(
+      modelId,
+      providerPath,
+      janDataFolderPath,
+      {
+        flash_attn: cfg.flash_attn ?? '',
+        cache_type_k: cfg.cache_type_k ?? 'f16',
+        cache_type_v: cfg.cache_type_v ?? 'f16',
+        cont_batching: cfg.cont_batching ?? true,
+        threads: cfg.threads ?? 0,
+      },
+      routerInfo
+    )
+  }
+
+  /**
+   * Apply a set of advisor suggestions by writing their values directly into
+   * `model.yml` and restarting the router.
+   */
+  async applyAdvisorSuggestions(
+    modelId: string,
+    patch: Record<string, string | number | boolean | null>
+  ): Promise<void> {
+    const providerPath = await this.getProviderPath()
+    const changed = await patchModelYaml(modelId, providerPath, patch)
+    if (!changed) return
+    try {
+      await this.startRouter()
+    } catch (e) {
+      logger.warn(`Failed to restart router after advisor patch for ${modelId}`, e)
     }
   }
 

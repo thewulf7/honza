@@ -18,6 +18,7 @@ export const route = {
     mcp_servers: '/settings/mcp-servers',
     https_proxy: '/settings/https-proxy',
     hardware: '/settings/hardware',
+    model_optimizer: '/settings/model-optimizer',
     assistant: '/settings/assistant',
     agents: '/settings/agents',
     agentDetail: '/settings/agents/$agentName',
