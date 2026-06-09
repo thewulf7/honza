@@ -13,7 +13,7 @@ import {
   IconDownload,
   IconLoader2,
   IconSparkles,
-  IconZap,
+  IconZip,
 } from '@tabler/icons-react'
 import { useCallback, useState } from 'react'
 import type { CatalogModel, ModelQuant, ModelScore } from '@/services/models/types'
@@ -104,7 +104,7 @@ function CatalogModelCard({
           <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
             {bd?.run_mode && (
               <span className="flex items-center gap-1">
-                <IconZap size={10} />{bd.run_mode}
+                <IconZip size={10} />{bd.run_mode}
               </span>
             )}
             {score.estimated_tps > 0 && <span>~{Math.round(score.estimated_tps)} t/s</span>}
@@ -262,7 +262,7 @@ function DiscoverContent() {
               <div className="flex items-center gap-2 flex-wrap">
                 {gpuLabel && (
                   <div className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-                    <IconZap size={11} />{gpuLabel}
+                    <IconZip size={11} />{gpuLabel}
                   </div>
                 )}
                 {cpuLabel && (
