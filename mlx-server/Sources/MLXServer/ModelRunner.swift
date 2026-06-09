@@ -2,7 +2,6 @@ import Foundation
 import MLX
 import MLXLLM
 import MLXLMCommon
-import MLXLMTokenizers
 import MLXVLM
 
 /// Manages loading and running inference with MLX models
