@@ -97,6 +97,8 @@ const PRESET_AFFECTING_KEYS = new Set<string>([
   'fit',
   'fit_target',
   'fit_ctx',
+  'n_cpu_moe',
+  'cpu_moe',
   'ctx_size',
   'n_gpu_layers',
   'flash_attn',
