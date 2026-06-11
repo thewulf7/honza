@@ -54,25 +54,6 @@ pub fn err_to_string<E: std::fmt::Display>(e: E) -> String {
     format!("Error: {e}")
 }
 
-/// Ensures a HuggingFace `resolve/` URL includes `?download=true`.
-///
-/// Without this parameter, HuggingFace may redirect to their Xet CAS bridge
-/// (`cas-bridge.xethub.hf.co`) which returns an empty body when accessed via
-/// plain HTTP — it expects the Xet protocol, not a standard file download.
-/// `?download=true` forces HuggingFace to issue a standard CDN redirect instead.
-pub fn ensure_hf_download_param(url: &str) -> std::borrow::Cow<str> {
-    // Only apply to huggingface.co resolve URLs
-    let is_hf_resolve = url.contains("huggingface.co") && url.contains("/resolve/");
-    if !is_hf_resolve || url.contains("download=true") {
-        return std::borrow::Cow::Borrowed(url);
-    }
-    if url.contains('?') {
-        std::borrow::Cow::Owned(format!("{url}&download=true"))
-    } else {
-        std::borrow::Cow::Owned(format!("{url}?download=true"))
-    }
-}
-
 /// Converts a URL to Jan mirror URL if applicable
 /// e.g., https://huggingface.co/... -> https://apps.jan.ai/huggingface.co/...
 /// or for nightly: https://huggingface.co/... -> https://apps-nightly.jan.ai/huggingface.co/...
@@ -610,16 +591,10 @@ async fn download_single_file(
         .await
         .map_err(err_to_string)?;
 
-    // Ensure HuggingFace resolve URLs include ?download=true so HuggingFace
-    // issues a standard CDN redirect rather than routing through its Xet CAS
-    // bridge, which doesn't serve file content via plain HTTP.
-    let effective_url = ensure_hf_download_param(&item.url);
-    let effective_url: &str = &effective_url;
-
     // Decode URL for better readability in logs
-    let decoded_url = url::Url::parse(effective_url)
+    let decoded_url = url::Url::parse(&item.url)
         .map(|u| u.to_string())
-        .unwrap_or_else(|_| effective_url.to_string());
+        .unwrap_or_else(|_| item.url.clone());
     log::info!("Started downloading: {decoded_url}");
     let client = _get_client_for_item(item, &header_map).map_err(err_to_string)?;
     let mut download_delta = 0u64;
@@ -627,7 +602,7 @@ async fn download_single_file(
 
     let (resp, actual_url) = if should_resume {
         let downloaded_size = tmp_save_path.metadata().map_err(err_to_string)?.len();
-        match _get_maybe_resume(&client, effective_url, downloaded_size).await {
+        match _get_maybe_resume(&client, &item.url, downloaded_size).await {
             Ok(resp) => {
                 log::info!(
                     "Resume download: {}, already downloaded {} bytes",
@@ -658,12 +633,12 @@ async fn download_single_file(
                 // fallback to normal download with proxy support
                 log::warn!("Failed to resume download: {e}");
                 should_resume = false;
-                _get_maybe_resume_with_fallback(&client, effective_url, 0).await?
+                _get_maybe_resume_with_fallback(&client, &item.url, 0).await?
             }
         }
     } else {
         // Use mirror fallback for new downloads
-        _get_maybe_resume_with_fallback(&client, effective_url, 0).await?
+        _get_maybe_resume_with_fallback(&client, &item.url, 0).await?
     };
 
     // Log which URL is being used for download
@@ -678,6 +653,8 @@ async fn download_single_file(
             progress_tracker.add_to_total(initial_progress + content_length);
         }
     }
+
+    let mut stream = resp.bytes_stream();
 
     let file = if should_resume {
         // resume download, append to existing file
@@ -694,134 +671,40 @@ async fn download_single_file(
     let mut writer = tokio::io::BufWriter::new(file);
     let mut total_transferred = initial_progress;
 
-    // ── Phase 1: stream the initial response ─────────────────────────────────
-    // Handles the mirror-fallback / resume first request.  Some CDNs (e.g.
-    // HuggingFace Xet via AWS CDN) return only one block (~2 MB) per signed URL,
-    // so the stream may end before the file is complete.
-    let phase1_start = total_transferred;
-    {
-        let mut stream = resp.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            if cancel_token.is_cancelled() {
-                writer.flush().await.ok();
-                log::info!("Download cancelled: {}", item.url);
-                return Err("Download cancelled".to_string());
-            }
-            let chunk = chunk.map_err(err_to_string)?;
-            writer.write_all(&chunk).await.map_err(err_to_string)?;
-            download_delta += chunk.len() as u64;
-            total_transferred += chunk.len() as u64;
-            if download_delta >= 10 * 1024 * 1024 {
-                progress_tracker.update_progress(&file_id, total_transferred).await;
-                let (t, tot) = progress_tracker.get_total_progress().await;
-                if let Err(e) = app.emit(&evt_name, DownloadEvent { transferred: t, total: tot }) {
-                    log::warn!("Failed to emit progress for {evt_name}: {e}");
-                }
-                download_delta = 0;
-            }
-        }
-    }
-
-    // ── Phase 2: parallel chunked download for the remainder ─────────────────
-    // If the first response ended before the full file arrived (chunked CDN),
-    // issue the remaining Range requests in parallel batches so throughput is
-    // limited by bandwidth rather than round-trip count.
-    if file_size > 0 && total_transferred < file_size {
-        if total_transferred == phase1_start {
-            // Phase 1 returned 0 bytes — CDN does not serve content via plain
-            // HTTP at this URL (e.g. HuggingFace Xet CAS bridge protocol).
+    // write chunk to file
+    while let Some(chunk) = stream.next().await {
+        if cancel_token.is_cancelled() {
+            // Keep the partial .tmp on disk so the download can be resumed;
+            // a true cancel deletes it in the download_files command.
             writer.flush().await.ok();
-            return Err(format!(
-                "Download incomplete: server returned an empty body at offset \
-                 {total_transferred}/{file_size} bytes. The file may use a \
-                 storage backend that requires a different download method."
-            ));
+            log::info!("Download cancelled: {}", item.url);
+            return Err("Download cancelled".to_string());
         }
 
-        // Number of parallel Range requests to keep in flight at once.
-        // Each HF Xet block is ~2 MB; 8 parallel requests → ~16 MB in flight.
-        const MAX_PARALLEL: usize = 8;
-        const CHUNK_SIZE: u64 = 2 * 1024 * 1024;
+        let chunk = chunk.map_err(err_to_string)?;
+        writer.write_all(&chunk).await.map_err(err_to_string)?;
+        download_delta += chunk.len() as u64;
+        total_transferred += chunk.len() as u64;
 
-        log::info!(
-            "Parallel chunk download: {}/{} bytes received, {} remaining",
-            total_transferred,
-            file_size,
-            file_size - total_transferred
-        );
+        // Update progress every 10 MB
+        if download_delta >= 10 * 1024 * 1024 {
+            // Update individual file progress
+            progress_tracker
+                .update_progress(&file_id, total_transferred)
+                .await;
 
-        // Collect all remaining chunk start-offsets up front.
-        let mut offsets: Vec<u64> = Vec::new();
-        let mut off = total_transferred;
-        while off < file_size {
-            offsets.push(off);
-            off += CHUNK_SIZE;
-        }
-
-        writer.flush().await.map_err(err_to_string)?;
-
-        for batch in offsets.chunks(MAX_PARALLEL) {
-            if cancel_token.is_cancelled() {
-                writer.flush().await.ok();
-                log::info!("Download cancelled: {}", item.url);
-                return Err("Download cancelled".to_string());
-            }
-
-            // Spawn one task per chunk in this batch — all run concurrently.
-            let handles: Vec<tokio::task::JoinHandle<Result<Vec<u8>, String>>> = batch
-                .iter()
-                .map(|&start| {
-                    let url_s = effective_url.to_string();
-                    let c = client.clone();
-                    let end = (start + CHUNK_SIZE - 1).min(file_size - 1);
-                    tokio::spawn(async move {
-                        let resp = c
-                            .get(url_s)
-                            .header("Range", format!("bytes={start}-{end}"))
-                            .send()
-                            .await
-                            .map_err(|e| format!("request error at {start}: {e}"))?;
-                        if !resp.status().is_success() {
-                            return Err(format!(
-                                "HTTP {} for bytes={start}-{end}",
-                                resp.status()
-                            ));
-                        }
-                        resp.bytes()
-                            .await
-                            .map(|b| b.to_vec())
-                            .map_err(|e| format!("body error at {start}: {e}"))
-                    })
-                })
-                .collect();
-
-            // Await results in order and write sequentially to keep the file coherent.
-            for handle in handles {
-                let data = handle
-                    .await
-                    .map_err(|e| format!("task join error: {e}"))
-                    .map_err(err_to_string)?
-                    .map_err(err_to_string)?;
-
-                if data.is_empty() {
-                    log::warn!(
-                        "Empty chunk at offset {total_transferred}/{file_size}, stopping"
-                    );
-                    break;
-                }
-
-                writer.write_all(&data).await.map_err(err_to_string)?;
-                download_delta += data.len() as u64;
-                total_transferred += data.len() as u64;
-            }
-
-            // Emit progress after each batch.
-            progress_tracker.update_progress(&file_id, total_transferred).await;
-            let (t, tot) = progress_tracker.get_total_progress().await;
-            if let Err(e) = app.emit(&evt_name, DownloadEvent { transferred: t, total: tot }) {
+            // Emit combined progress event
+            let (combined_transferred, combined_total) =
+                progress_tracker.get_total_progress().await;
+            let evt = DownloadEvent {
+                transferred: combined_transferred,
+                total: combined_total,
+            };
+            if let Err(e) = app.emit(&evt_name, evt) {
                 log::warn!("Failed to emit progress for {evt_name}: {e}");
             }
-            download_delta = 0;
+
+            download_delta = 0u64;
         }
     }
 
@@ -850,6 +733,10 @@ async fn download_single_file(
         .await
         .map_err(err_to_string)?;
 
+    // Decode URL for better readability in logs
+    let decoded_url = url::Url::parse(&item.url)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| item.url.clone());
     log::info!("Finished downloading: {decoded_url}");
     Ok(save_path.to_path_buf())
 }

@@ -30,33 +30,6 @@ NVCC_CCBIN ?= $(shell powershell -NoProfile -NonInteractive -Command "& 'C:\Prog
 export NVCC_CCBIN
 endif
 
-# On Windows, mistral.rs is built with the `cudnn` feature which requires
-# cudnn.lib at link time.  Detect (and auto-install) cuDNN at parse time so
-# that every cargo invocation in this session inherits the correct LIB path.
-# The script outputs only the lib directory; all diagnostic messages go to
-# stderr so the $(shell ...) capture stays clean.
-ifeq ($(DETECTED_OS),Windows)
-CUDNN_LIB_DIR ?= $(shell powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\find-cudnn-lib-path.ps1 2>NUL)
-ifneq ($(CUDNN_LIB_DIR),)
-# LIB  → linker finds cudnn.lib
-# PATH → loader finds cudnn64_9.dll (and the other cuDNN DLLs) at runtime
-export LIB  := $(LIB);$(CUDNN_LIB_DIR)
-export PATH := $(PATH);$(CUDNN_LIB_DIR)
-endif
-# cuda-bindings (pulled in via mistralrs cutile feature) requires
-# CUDA_TOOLKIT_PATH; the NVIDIA installer only sets CUDA_PATH.
-ifneq ($(CUDA_PATH),)
-export CUDA_TOOLKIT_PATH ?= $(CUDA_PATH)
-endif
-# bindgen (used by cuda-bindings) needs libclang.dll. Prefer an existing
-# LIBCLANG_PATH; otherwise fall back to the standard LLVM install location.
-ifeq ($(LIBCLANG_PATH),)
-ifneq ($(wildcard C:/Program Files/LLVM/bin/libclang.dll),)
-export LIBCLANG_PATH := C:\Program Files\LLVM\bin
-endif
-endif
-endif
-
 # Default target, does nothing
 all:
 	@echo "Specify a target to run"
@@ -231,17 +204,6 @@ ifeq ($(DETECTED_OS),Darwin)
 	fi
 else
 	@echo "Skipping MLX server build (macOS only)"
-endif
-
-# Install cuDNN on Windows (required for mistral.rs CUDA build with cudnn feature).
-# Normally this is handled automatically at make parse-time via CUDNN_LIB_DIR above;
-# run this target explicitly to force a fresh detection / installation and persist
-# the path to the user-level LIB environment variable for future shells.
-install-cudnn:
-ifeq ($(DETECTED_OS),Windows)
-	powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\install-cudnn-windows.ps1
-else
-	@echo "install-cudnn is Windows-only. On Linux install libcudnn-dev via apt/dnf; on macOS cuDNN is not needed."
 endif
 
 # Build jan CLI (release, platform-aware) → src-tauri/resources/bin/jan[.exe]
