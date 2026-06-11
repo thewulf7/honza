@@ -17,7 +17,8 @@
         "log-app-window",
         "logs-window",
         "system-monitor-window",
-        "mlx"
+        "mlx",
+        "mistralrs"
       ],
       "csp": {
         "default-src": "'self' customprotocol: asset: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*",

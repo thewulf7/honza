@@ -103,6 +103,10 @@ export const APIs = {
                 'enable_server_tool_execution',
                 'enableServerToolExecution',
               ]),
+              preferred_local_provider: pickString(raw, [
+                'preferred_local_provider',
+                'preferredLocalProvider',
+              ]) ?? null,
             }
             return getServiceHub().core().invoke(command, { config })
           }

@@ -14,7 +14,7 @@ export const getLastUsedModel = (): {
   }
 }
 
-const LOCAL_PROVIDER_PRIORITY = ['llamacpp', 'mlx']
+const LOCAL_PROVIDER_PRIORITY = ['llamacpp', 'mlx', 'mistralrs']
 
 function firstLocalModel(
   getProviderByName: (name: string) => ModelProvider | undefined

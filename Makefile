@@ -21,6 +21,15 @@ else
     MKDIR = mkdir -p $(1)
 endif
 
+# On Windows, nvcc needs cl.exe as its host compiler but it is not in PATH
+# unless a VS Developer Command Prompt is open.  vswhere.exe (bundled with
+# every Visual Studio install) locates the right directory automatically.
+# NVCC_CCBIN can be overridden by the caller (e.g. for a specific VS version).
+ifeq ($(DETECTED_OS),Windows)
+NVCC_CCBIN ?= $(shell powershell -NoProfile -NonInteractive -Command "& 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe' -latest -find 'VC\Tools\MSVC\*\bin\Hostx64\x64' 2>$$null | Select-Object -Last 1" 2>NUL)
+export NVCC_CCBIN
+endif
+
 # Default target, does nothing
 all:
 	@echo "Specify a target to run"

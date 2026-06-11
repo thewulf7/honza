@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "mistralrs",
+  "description": "mistral.rs plugin permissions (cross-platform inference engine)",
+  "windows": ["main"],
+  "permissions": ["mistralrs:default"]
+}
