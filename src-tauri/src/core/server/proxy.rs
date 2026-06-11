@@ -1410,16 +1410,30 @@ async fn resolve_upstream_for_model(
     let pc = provider_configs.lock().await;
     let provider_name = pc
         .iter()
-        .find(|(_, config)| config.models.iter().any(|m| m == model_id))
+        .find(|(_, config)| {
+            config.base_url.as_ref()
+                .map(|u| u.starts_with("http://") || u.starts_with("https://"))
+                .unwrap_or(false)
+                && config.models.iter().any(|m| m == model_id)
+        })
         .map(|(_, config)| config.provider.clone())
         .or_else(|| {
             if let Some(sep_pos) = model_id.find('/') {
                 let potential_provider: &str = &model_id[..sep_pos];
-                if pc.contains_key(potential_provider) {
-                    return Some(potential_provider.to_string());
+                if let Some(cfg) = pc.get(potential_provider) {
+                    if cfg.base_url.as_ref()
+                        .map(|u| u.starts_with("http://") || u.starts_with("https://"))
+                        .unwrap_or(false)
+                    {
+                        return Some(potential_provider.to_string());
+                    }
                 }
             }
-            pc.get(model_id).map(|c| c.provider.clone())
+            pc.get(model_id)
+                .filter(|c| c.base_url.as_ref()
+                    .map(|u| u.starts_with("http://") || u.starts_with("https://"))
+                    .unwrap_or(false))
+                .map(|c| c.provider.clone())
         });
     drop(pc);
 
@@ -2341,19 +2355,35 @@ async fn proxy_request(
                     if let Some(model_id) = json_body.get("model").and_then(|v| v.as_str()) {
                         let pc = provider_configs.lock().await;
 
-                        // Try to find a provider for this model
+                        // Try to find a provider for this model (only providers with a valid
+                        // absolute base_url qualify; local providers with empty URLs must
+                        // fall through to the local_sessions check below).
                         let provider_name: Option<String> = pc
                             .iter()
-                            .find(|(_, config)| config.models.iter().any(|m| m == model_id))
+                            .find(|(_, config)| {
+                                config.base_url.as_ref()
+                                    .map(|u| u.starts_with("http://") || u.starts_with("https://"))
+                                    .unwrap_or(false)
+                                    && config.models.iter().any(|m| m == model_id)
+                            })
                             .map(|(_, config)| config.provider.clone())
                             .or_else(|| {
                                 if let Some(sep_pos) = model_id.find('/') {
                                     let potential_provider: &str = &model_id[..sep_pos];
-                                    if pc.contains_key(potential_provider) {
-                                        return Some(potential_provider.to_string());
+                                    if let Some(cfg) = pc.get(potential_provider) {
+                                        if cfg.base_url.as_ref()
+                                            .map(|u| u.starts_with("http://") || u.starts_with("https://"))
+                                            .unwrap_or(false)
+                                        {
+                                            return Some(potential_provider.to_string());
+                                        }
                                     }
                                 }
-                                pc.get(model_id).map(|c| c.provider.clone())
+                                pc.get(model_id)
+                                    .filter(|c| c.base_url.as_ref()
+                                        .map(|u| u.starts_with("http://") || u.starts_with("https://"))
+                                        .unwrap_or(false))
+                                    .map(|c| c.provider.clone())
                             });
 
                         drop(pc);
@@ -2936,24 +2966,36 @@ async fn proxy_request(
                         // First, check if there's a registered remote provider for this model
                         let pc = provider_configs.lock().await;
 
-                        // Try to find a provider that has this model configured
+                        // Try to find a provider that has this model configured.
+                        // Only match providers with a valid absolute base_url; entries with
+                        // an empty or relative URL (e.g. local mistralrs/mlx registered by
+                        // mistake) must fall through to the local_sessions check below.
+                        let has_valid_base_url = |cfg: &ProviderConfig| {
+                            cfg.base_url.as_ref()
+                                .map(|u| u.starts_with("http://") || u.starts_with("https://"))
+                                .unwrap_or(false)
+                        };
                         let provider_name = pc
                             .iter()
                             .find(|(_, config)| {
                                 // Check if any model in this provider matches
-                                config.models.iter().any(|m| m == model_id)
+                                has_valid_base_url(config) && config.models.iter().any(|m| m == model_id)
                             })
                             .map(|(_, config)| config.provider.clone())
                             .or_else(|| {
                                 // Try to find by provider name in model_id (e.g., "anthropic/claude-3-opus")
                                 if let Some(sep_pos) = model_id.find('/') {
                                     let potential_provider: &str = &model_id[..sep_pos];
-                                    if pc.contains_key(potential_provider) {
-                                        return Some(potential_provider.to_string());
+                                    if let Some(cfg) = pc.get(potential_provider) {
+                                        if has_valid_base_url(cfg) {
+                                            return Some(potential_provider.to_string());
+                                        }
                                     }
                                 }
                                 // Also check if the model_id itself matches a provider name
-                                pc.get(model_id).map(|c| c.provider.clone())
+                                pc.get(model_id)
+                                    .filter(|c| has_valid_base_url(c))
+                                    .map(|c| c.provider.clone())
                             });
 
                         drop(pc);

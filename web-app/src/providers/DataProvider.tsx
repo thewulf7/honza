@@ -35,8 +35,8 @@ type RegisterProviderRequest = {
 }
 
 async function registerRemoteProvider(provider: ModelProvider) {
-  // Skip llamacpp - those are local models
-  if (provider.provider === 'llamacpp') return
+  // Skip local inference providers - they are managed via local_sessions, not provider_configs
+  if (['llamacpp', 'mlx', 'mistralrs'].includes(provider.provider)) return
 
   const chain = providerRemoteApiKeyChain(provider)
   if (chain.length === 0) {
