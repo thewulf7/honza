@@ -66,7 +66,6 @@ function Index() {
     return (
       providerHasRemoteApiKeys(provider) ||
       (provider.provider === 'llamacpp' && provider.models.length) ||
-      (provider.provider === 'mistralrs' && provider.models.length) ||
       (provider.provider === 'jan' && provider.models.length)
     )
   })

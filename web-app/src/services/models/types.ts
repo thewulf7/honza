@@ -143,7 +143,7 @@ export type HubScoreRequestSource = {
   model_id: string
   path: string
   file_size: string
-  runtime: 'llamacpp' | 'mlx' | 'mistralrs' | undefined
+  runtime: 'llamacpp' | 'mlx' | undefined
   quantization?: string
   total_size_bytes?: number
 }

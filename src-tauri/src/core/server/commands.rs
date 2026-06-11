@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_llamacpp::state::LlamacppState;
-use tauri_plugin_mistralrs::state::MistralrsState;
 
-use crate::core::server::{proxy, LocalSessions};
+use crate::core::server::proxy;
 use crate::core::app::commands::get_jan_data_folder_path;
 use crate::core::state::AppState;
 
@@ -18,7 +17,6 @@ pub struct StartServerConfig {
     pub trusted_hosts: Vec<String>,
     pub proxy_timeout: u64,
     pub enable_server_tool_execution: Option<bool>,
-    pub preferred_local_provider: Option<String>,
 }
 
 #[tauri::command]
@@ -35,7 +33,6 @@ pub async fn start_server<R: Runtime>(
         trusted_hosts,
         proxy_timeout,
         enable_server_tool_execution,
-        preferred_local_provider,
     } = config;
     let server_handle = state.server_handle.clone();
     let llama_state: State<Arc<LlamacppState>> = app_handle.state();
@@ -54,17 +51,10 @@ pub async fn start_server<R: Runtime>(
         >,
     > = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-    let mistralrs_sessions = {
-        let mrs_state: State<MistralrsState> = app_handle.state();
-        mrs_state.server_processes.clone()
-    };
-
-    let local_sessions = LocalSessions::new(mlx_sessions, mistralrs_sessions);
-
     let actual_port = proxy::start_server(
         server_handle,
         llama_state_arc,
-        local_sessions,
+        mlx_sessions,
         host,
         port,
         prefix,
@@ -76,7 +66,6 @@ pub async fn start_server<R: Runtime>(
         state.mcp_settings.clone(),
         get_jan_data_folder_path(app_handle.clone()).to_string_lossy().into_owned(),
         enable_server_tool_execution.unwrap_or(false),
-        preferred_local_provider,
     )
     .await
     .map_err(|e| e.to_string())?;

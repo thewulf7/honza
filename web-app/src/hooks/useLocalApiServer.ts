@@ -42,9 +42,6 @@ type LocalApiServerState = {
   // Execute tools on the Local API server for chat endpoints
   enableServerToolExecution: boolean
   setEnableServerToolExecution: (value: boolean) => void
-  // Preferred local provider for routing (llamacpp, mlx, mistralrs)
-  preferredLocalProvider: string | null
-  setPreferredLocalProvider: (value: string | null) => void
 }
 
 export const useLocalApiServer = create<LocalApiServerState>()(
@@ -85,14 +82,11 @@ export const useLocalApiServer = create<LocalApiServerState>()(
         set({ enableServerToolExecution: value }),
       apiKey: '',
       setApiKey: (value) => set({ apiKey: value }),
-      preferredLocalProvider: null,
-      setPreferredLocalProvider: (value) =>
-        set({ preferredLocalProvider: value }),
     }),
     {
       name: localStorageKey.settingLocalApiServer,
       storage: createJSONStorage(() => localStorage),
-      version: 4,
+      version: 3,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Partial<LocalApiServerState>
         if (version < 1) {
@@ -106,10 +100,6 @@ export const useLocalApiServer = create<LocalApiServerState>()(
         if (version < 3) {
           // v2 -> v3: add server-side tool execution toggle
           state.enableServerToolExecution = false
-        }
-        if (version < 4) {
-          // v3 -> v4: add preferred local provider selector
-          state.preferredLocalProvider = null
         }
         return state
       },

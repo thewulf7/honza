@@ -73,15 +73,13 @@ function LocalAPIServerContent() {
     setLastServerModels,
     defaultModelLocalApiServer,
     setDefaultModelLocalApiServer,
-    preferredLocalProvider,
-    setPreferredLocalProvider,
   } = useLocalApiServer()
 
   const providers = useModelProvider((state) => state.providers)
   const localModels = useMemo(
     () =>
       providers
-        .filter((p) => p.provider === 'llamacpp' || p.provider === 'mlx' || p.provider === 'mistralrs')
+        .filter((p) => p.provider === 'llamacpp' || p.provider === 'mlx')
         .flatMap((p) => p.models.map((m) => ({ id: m.id, provider: p.provider }))),
     [providers]
   )
@@ -169,7 +167,6 @@ function LocalAPIServerContent() {
             isVerboseEnabled: verboseLogs,
             proxyTimeout: proxyTimeout,
             enableServerToolExecution,
-            preferredLocalProvider,
           })
         })
         .then((actualPort: number) => {
@@ -481,40 +478,6 @@ function LocalAPIServerContent() {
                             }
                           >
                             <span className="truncate">{modelId}</span>
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  }
-                />
-                <CardItem
-                  title="Preferred Local Provider"
-                  description="Choose which local inference engine handles requests when multiple are available."
-                  actions={
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-40 justify-between"
-                        >
-                          <span className="truncate">
-                            {preferredLocalProvider ?? 'Auto (llamacpp)'}
-                          </span>
-                          <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground ml-2" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-44">
-                        {[null, 'llamacpp', 'mlx', 'mistralrs'].map((p) => (
-                          <DropdownMenuItem
-                            key={p ?? 'auto'}
-                            className={cn(
-                              'cursor-pointer my-0.5',
-                              preferredLocalProvider === p && 'bg-secondary-foreground/8'
-                            )}
-                            onClick={() => setPreferredLocalProvider(p)}
-                          >
-                            {p === null ? 'Auto (llamacpp)' : p}
                           </DropdownMenuItem>
                         ))}
                       </DropdownMenuContent>

@@ -176,7 +176,7 @@ export function getProviderApiType(
   return provider.provider === 'anthropic' ? 'anthropic' : 'openai'
 }
 
-const LOCAL_PROVIDER_IDS = new Set<string>(['llamacpp', 'mlx', 'mistralrs'])
+const LOCAL_PROVIDER_IDS = new Set<string>(['llamacpp', 'mlx'])
 
 /**
  * Predefined remote providers ship locked base_urls and expose only a fixed

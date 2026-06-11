@@ -1015,7 +1015,6 @@ pub struct ProxyConfig {
     pub host: String,
     pub port: u16,
     pub enable_server_tool_execution: bool,
-    pub preferred_local_provider: Option<String>,
 }
 
 /// Determines the final destination path based on the original request path
@@ -1023,7 +1022,7 @@ pub fn get_destination_path(original_path: &str, prefix: &str) -> String {
     remove_prefix(original_path, prefix)
 }
 
-use crate::core::server::LocalSessions;
+use crate::core::server::MlxBackendSession;
 
 use rmcp::model::{CallToolRequestParam, CallToolResult};
 
@@ -1403,7 +1402,7 @@ async fn resolve_upstream_for_model(
     model_id: &str,
     provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
     llama_state: Arc<LlamacppState>,
-    local_sessions: Arc<LocalSessions>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
 ) -> Result<(String, Vec<String>), String> {
     let destination_path = "/chat/completions";
 
@@ -1435,7 +1434,7 @@ async fn resolve_upstream_for_model(
         }
     }
 
-    let mlx_guard = local_sessions.mlx.lock().await;
+    let mlx_guard = mlx_sessions.lock().await;
     if let Some(info) = mlx_guard.values().find(|s| s.info.model_id == model_id) {
         let target_port = info.info.port;
         return Ok((
@@ -1444,16 +1443,6 @@ async fn resolve_upstream_for_model(
         ));
     }
     drop(mlx_guard);
-
-    let mrs_guard = local_sessions.mistralrs.lock().await;
-    if let Some(session) = mrs_guard.values().find(|s| s.info.model_id == model_id) {
-        let target_port = session.info.port;
-        return Ok((
-            format!("http://127.0.0.1:{target_port}/v1{destination_path}"),
-            vec![session.info.api_key.clone()],
-        ));
-    }
-    drop(mrs_guard);
 
     if let Some((url, key)) = router_upstream(&llama_state, destination_path).await {
         return Ok((url, vec![key]));
@@ -1465,38 +1454,14 @@ async fn resolve_upstream_for_model(
 async fn first_available_local_model_id(
     llama_state: Arc<LlamacppState>,
     client: &Client,
-    local_sessions: Arc<LocalSessions>,
-    preferred_provider: Option<&str>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
 ) -> Option<String> {
-    // Check preferred provider first
-    match preferred_provider {
-        Some("mlx") => {
-            let mlx_guard = local_sessions.mlx.lock().await;
-            if let Some(m) = mlx_guard.values().next().map(|s| s.info.model_id.clone()) {
-                return Some(m);
-            }
-        }
-        Some("mistralrs") => {
-            let mrs_guard = local_sessions.mistralrs.lock().await;
-            if let Some(m) = mrs_guard.values().next().map(|s| s.info.model_id.clone()) {
-                return Some(m);
-            }
-        }
-        _ => {}
-    }
-
     if let Some(model) = router_first_model(&llama_state, client).await {
         return Some(model);
     }
 
-    let mlx_guard = local_sessions.mlx.lock().await;
-    if let Some(m) = mlx_guard.values().next().map(|s| s.info.model_id.clone()) {
-        return Some(m);
-    }
-    drop(mlx_guard);
-
-    let mrs_guard = local_sessions.mistralrs.lock().await;
-    mrs_guard.values().next().map(|s| s.info.model_id.clone())
+    let mlx_guard = mlx_sessions.lock().await;
+    mlx_guard.values().next().map(|s| s.info.model_id.clone())
 }
 
 pub(crate) fn choose_proxy_model_id(
@@ -1516,15 +1481,14 @@ async fn resolve_proxy_model_id(
     provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
     llama_state: Arc<LlamacppState>,
     client: &Client,
-    local_sessions: Arc<LocalSessions>,
-    preferred_provider: Option<&str>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
 ) -> Option<String> {
     let requested_model_available = if let Some(model_id) = requested_model {
         resolve_upstream_for_model(
             model_id,
             provider_configs.clone(),
             llama_state.clone(),
-            local_sessions.clone(),
+            mlx_sessions.clone(),
         )
         .await
         .is_ok()
@@ -1532,7 +1496,7 @@ async fn resolve_proxy_model_id(
         false
     };
 
-    let fallback_model = first_available_local_model_id(llama_state, client, local_sessions, preferred_provider).await;
+    let fallback_model = first_available_local_model_id(llama_state, client, mlx_sessions).await;
     let resolved_model = choose_proxy_model_id(
         requested_model,
         requested_model_available,
@@ -1555,8 +1519,7 @@ async fn rewrite_request_model_to_available_fallback(
     provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
     llama_state: Arc<LlamacppState>,
     client: &Client,
-    local_sessions: Arc<LocalSessions>,
-    preferred_provider: Option<&str>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
 ) -> Result<bool, &'static str> {
     let Some(requested_model_id) = json_body.get("model").and_then(|v| v.as_str()) else {
         return Ok(false);
@@ -1567,8 +1530,7 @@ async fn rewrite_request_model_to_available_fallback(
         provider_configs,
         llama_state,
         client,
-        local_sessions,
-        preferred_provider,
+        mlx_sessions,
     )
     .await
     .ok_or("No models are available")?;
@@ -1800,11 +1762,10 @@ async fn run_server_side_openai_orchestration(
     client: &Client,
     provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
     llama_state: Arc<LlamacppState>,
-    local_sessions: Arc<LocalSessions>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
     mcp_servers: SharedMcpServers,
     mcp_settings: Arc<Mutex<McpSettings>>,
     jan_data_folder: &str,
-    preferred_provider: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let messages_value = json_body
         .get("messages")
@@ -1838,9 +1799,13 @@ async fn run_server_side_openai_orchestration(
         }
     }
     if model_id.is_none() {
-        model_id = first_available_local_model_id(
-            llama_state.clone(), client, local_sessions.clone(), preferred_provider,
-        ).await;
+        if let Some(first) = router_first_model(&llama_state, client).await {
+            model_id = Some(first);
+        }
+    }
+    if model_id.is_none() {
+        let mlx_guard = mlx_sessions.lock().await;
+        model_id = mlx_guard.values().next().map(|s| s.info.model_id.clone());
     }
     let model_id = model_id.ok_or("No running model sessions available")?;
 
@@ -1856,7 +1821,7 @@ async fn run_server_side_openai_orchestration(
         &model_id,
         provider_configs.clone(),
         llama_state.clone(),
-        local_sessions.clone(),
+        mlx_sessions.clone(),
     )
     .await?;
 
@@ -1970,7 +1935,7 @@ async fn proxy_request(
     client: Client,
     config: ProxyConfig,
     llama_state: Arc<LlamacppState>,
-    local_sessions: Arc<LocalSessions>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
     provider_configs: Arc<Mutex<HashMap<String, ProviderConfig>>>,
     mcp_servers: SharedMcpServers,
     mcp_settings: Arc<Mutex<McpSettings>>,
@@ -2300,11 +2265,10 @@ async fn proxy_request(
                             &client,
                             provider_configs.clone(),
                             llama_state.clone(),
-                            local_sessions.clone(),
+                            mlx_sessions.clone(),
                             mcp_servers.clone(),
                             mcp_settings.clone(),
                             &jan_data_folder,
-                            config.preferred_local_provider.as_deref(),
                         )
                         .await
                         {
@@ -2372,28 +2336,14 @@ async fn proxy_request(
                             }
                         } else {
                             let mlx_session_info = {
-                                let mlx_guard = local_sessions.mlx.lock().await;
+                                let mlx_guard = mlx_sessions.lock().await;
                                 mlx_guard
                                     .values()
                                     .find(|s| s.info.model_id == model_id)
                                     .map(|s| s.info.clone())
                             };
-                            let mrs_session_info = if mlx_session_info.is_none() {
-                                let mrs_guard = local_sessions.mistralrs.lock().await;
-                                mrs_guard
-                                    .values()
-                                    .find(|s| s.info.model_id == model_id)
-                                    .map(|s| s.info.clone())
-                            } else {
-                                None
-                            };
 
                             if let Some(info) = mlx_session_info {
-                                let target_port = info.port;
-                                session_api_keys = vec![info.api_key.clone()];
-                                target_base_url =
-                                    Some(format!("http://127.0.0.1:{}/v1/messages", target_port));
-                            } else if let Some(info) = mrs_session_info {
                                 let target_port = info.port;
                                 session_api_keys = vec![info.api_key.clone()];
                                 target_base_url =
@@ -2575,16 +2525,18 @@ async fn proxy_request(
                 if !trimmed.is_empty() && trimmed != "*" {
                     model_id = Some(trimmed.to_string());
                 } else {
-                    model_id = first_available_local_model_id(
-                        llama_state.clone(), &client, local_sessions.clone(),
-                        config.preferred_local_provider.as_deref(),
-                    ).await;
+                    model_id = router_first_model(&llama_state, &client).await;
+                    if model_id.is_none() {
+                        let mlx_guard = mlx_sessions.lock().await;
+                        model_id = mlx_guard.values().next().map(|s| s.info.model_id.clone());
+                    }
                 }
             } else {
-                model_id = first_available_local_model_id(
-                    llama_state.clone(), &client, local_sessions.clone(),
-                    config.preferred_local_provider.as_deref(),
-                ).await;
+                model_id = router_first_model(&llama_state, &client).await;
+                if model_id.is_none() {
+                    let mlx_guard = mlx_sessions.lock().await;
+                    model_id = mlx_guard.values().next().map(|s| s.info.model_id.clone());
+                }
             }
 
             let model_id = match model_id {
@@ -2630,7 +2582,7 @@ async fn proxy_request(
                 &model_id,
                 provider_configs.clone(),
                 llama_state.clone(),
-                local_sessions.clone(),
+                mlx_sessions.clone(),
             )
             .await
             {
@@ -2863,11 +2815,10 @@ async fn proxy_request(
                             &client,
                             provider_configs.clone(),
                             llama_state.clone(),
-                            local_sessions.clone(),
+                            mlx_sessions.clone(),
                             mcp_servers.clone(),
                             mcp_settings.clone(),
                             &jan_data_folder,
-                            config.preferred_local_provider.as_deref(),
                         )
                         .await
                         {
@@ -2905,8 +2856,7 @@ async fn proxy_request(
                             provider_configs.clone(),
                             llama_state.clone(),
                             &client,
-                            local_sessions.clone(),
-                            config.preferred_local_provider.as_deref(),
+                            mlx_sessions.clone(),
                         )
                         .await {
                             Ok(changed) => changed,
@@ -2988,26 +2938,17 @@ async fn proxy_request(
                             let sessions_find_model = model_id;
 
                             let mlx_session_info = {
-                                let mlx_guard = local_sessions.mlx.lock().await;
+                                let mlx_guard = mlx_sessions.lock().await;
                                 mlx_guard
                                     .values()
                                     .find(|s| s.info.model_id == sessions_find_model)
                                     .map(|s| s.info.clone())
                             };
-                            let mrs_session_info = if mlx_session_info.is_none() {
-                                let mrs_guard = local_sessions.mistralrs.lock().await;
-                                mrs_guard
-                                    .values()
-                                    .find(|s| s.info.model_id == sessions_find_model)
-                                    .map(|s| s.info.clone())
-                            } else {
-                                None
-                            };
 
                             let router_up =
                                 router_upstream(&llama_state, &destination_path).await;
 
-                            if mlx_session_info.is_none() && mrs_session_info.is_none() && router_up.is_none() {
+                            if mlx_session_info.is_none() && router_up.is_none() {
                                 log::warn!(
                                     "Request for model '{model_id}' but no models are running."
                                 );
@@ -3028,13 +2969,6 @@ async fn proxy_request(
                                 let target_port = info.port;
                                 session_api_keys = vec![info.api_key.clone()];
                                 log::debug!("Found MLX session for model_id {model_id}");
-                                target_base_url = Some(format!(
-                                    "http://127.0.0.1:{target_port}/v1{destination_path}"
-                                ));
-                            } else if let Some(info) = mrs_session_info {
-                                let target_port = info.port;
-                                session_api_keys = vec![info.api_key.clone()];
-                                log::debug!("Found mistral.rs session for model_id {model_id}");
                                 target_base_url = Some(format!(
                                     "http://127.0.0.1:{target_port}/v1{destination_path}"
                                 ));
@@ -3121,7 +3055,7 @@ async fn proxy_request(
                 .collect();
 
             let mlx_models: Vec<_> = {
-                let mlx_guard = local_sessions.mlx.lock().await;
+                let mlx_guard = mlx_sessions.lock().await;
                 mlx_guard
                     .values()
                     .map(|session| {
@@ -3139,36 +3073,6 @@ async fn proxy_request(
                             .join(&id)
                             .join("model.yml");
 
-                        if let Ok(content) = std::fs::read_to_string(&yml_path) {
-                            if let Ok(yml) = serde_yaml::from_str::<serde_json::Value>(&content) {
-                                if let Some(obj_mut) = obj.as_object_mut() {
-                                    let _ = obj_mut.insert("metadata".to_string(), yml);
-                                }
-                            }
-                        }
-                        obj
-                    })
-                    .collect()
-            };
-
-            let mistralrs_models: Vec<_> = {
-                let mrs_guard = local_sessions.mistralrs.lock().await;
-                mrs_guard
-                    .values()
-                    .map(|session| {
-                        let id = session.info.model_id.clone();
-                        let mut obj = serde_json::json!({
-                            "id": &id,
-                            "object": "model",
-                            "created": 1,
-                            "owned_by": "mistral.rs"
-                        });
-                        // mistral.rs reuses the llamacpp model directory
-                        let yml_path = std::path::Path::new(&jan_data_folder)
-                            .join("llamacpp")
-                            .join("models")
-                            .join(&id)
-                            .join("model.yml");
                         if let Ok(content) = std::fs::read_to_string(&yml_path) {
                             if let Ok(yml) = serde_yaml::from_str::<serde_json::Value>(&content) {
                                 if let Some(obj_mut) = obj.as_object_mut() {
@@ -3199,14 +3103,12 @@ async fn proxy_request(
             // Store counts before moving
             let local_count = local_models.len();
             let mlx_count = mlx_models.len();
-            let mrs_count = mistralrs_models.len();
             let remote_count = remote_models.len();
 
             // Combine all models
-            let mut all_models = Vec::with_capacity(local_count + mlx_count + mrs_count + remote_count);
+            let mut all_models = Vec::with_capacity(local_count + mlx_count + remote_count);
             all_models.extend(local_models);
             all_models.extend(mlx_models);
-            all_models.extend(mistralrs_models);
             all_models.extend(remote_models);
 
             let response_json = serde_json::json!({
@@ -3229,11 +3131,10 @@ async fn proxy_request(
             );
 
             log::debug!(
-                "Returning {} models ({} llama.cpp, {} MLX, {} mistral.rs, {} remote)",
+                "Returning {} models ({} llama.cpp, {} MLX, {} remote)",
                 all_models.len(),
                 local_count,
                 mlx_count,
-                mrs_count,
                 remote_count
             );
 
@@ -3715,7 +3616,7 @@ pub async fn is_server_running(server_handle: Arc<Mutex<Option<ServerHandle>>>) 
 pub async fn start_server(
     server_handle: Arc<Mutex<Option<ServerHandle>>>,
     llama_state: Arc<LlamacppState>,
-    local_sessions: Arc<LocalSessions>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
     host: String,
     port: u16,
     prefix: String,
@@ -3727,12 +3628,11 @@ pub async fn start_server(
     mcp_settings: Arc<Mutex<McpSettings>>,
     jan_data_folder: String,
     enable_server_tool_execution: bool,
-    preferred_local_provider: Option<String>,
 ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
     start_server_internal(
         server_handle,
         llama_state,
-        local_sessions,
+        mlx_sessions,
         host,
         port,
         prefix,
@@ -3744,7 +3644,6 @@ pub async fn start_server(
         mcp_settings,
         jan_data_folder,
         enable_server_tool_execution,
-        preferred_local_provider,
     )
     .await
 }
@@ -3753,7 +3652,7 @@ pub async fn start_server(
 async fn start_server_internal(
     server_handle: Arc<Mutex<Option<ServerHandle>>>,
     llama_state: Arc<LlamacppState>,
-    local_sessions: Arc<LocalSessions>,
+    mlx_sessions: Arc<Mutex<HashMap<i32, MlxBackendSession>>>,
     host: String,
     port: u16,
     prefix: String,
@@ -3765,7 +3664,6 @@ async fn start_server_internal(
     mcp_settings: Arc<Mutex<McpSettings>>,
     jan_data_folder: String,
     enable_server_tool_execution: bool,
-    preferred_local_provider: Option<String>,
 ) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
     let mut handle_guard = server_handle.lock().await;
     if handle_guard.is_some() {
@@ -3792,7 +3690,6 @@ async fn start_server_internal(
         host: host.clone(),
         port,
         enable_server_tool_execution,
-        preferred_local_provider,
     };
 
     let client = Client::builder()
@@ -3805,7 +3702,7 @@ async fn start_server_internal(
         let client = client.clone();
         let config = config.clone();
         let llama_state = llama_state.clone();
-        let local_sessions = local_sessions.clone();
+        let mlx_sessions = mlx_sessions.clone();
         let provider_configs = provider_configs.clone();
         let mcp_servers = mcp_servers.clone();
         let mcp_settings = mcp_settings.clone();
@@ -3818,7 +3715,7 @@ async fn start_server_internal(
                     client.clone(),
                     config.clone(),
                     llama_state.clone(),
-                    local_sessions.clone(),
+                    mlx_sessions.clone(),
                     provider_configs.clone(),
                     mcp_servers.clone(),
                     mcp_settings.clone(),

@@ -95,7 +95,6 @@ zip = "0.6"
 tauri-plugin-deep-link = { version = "2", optional = true }
 tauri-plugin-hardware = { path = "./plugins/tauri-plugin-hardware", optional = true }
 tauri-plugin-llamacpp = { path = "./plugins/tauri-plugin-llamacpp" }
-tauri-plugin-mistralrs = { path = "./plugins/tauri-plugin-mistralrs" }
 tauri-plugin-vector-db = { path = "./plugins/tauri-plugin-vector-db" }
 tauri-plugin-rag = { path = "./plugins/tauri-plugin-rag" }
 # `default-features = false` drops the plugin's default `rustls-tls` (bundled

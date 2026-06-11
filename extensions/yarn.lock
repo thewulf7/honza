@@ -388,18 +388,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@janhq/core@file:../../core/package.tgz::locator=%40janhq%2Fmistralrs-extension%40workspace%3Amistralrs-extension":
-  version: 0.1.10
-  resolution: "@janhq/core@file:../../core/package.tgz#../../core/package.tgz::hash=376b9c&locator=%40janhq%2Fmistralrs-extension%40workspace%3Amistralrs-extension"
-  dependencies:
-    rxjs: "npm:^7.8.1"
-    ulidx: "npm:^2.3.0"
-  peerDependencies:
-    react: 19.0.0
-  checksum: 10c0/cda5831848f829df0db1fe9b12191a061ff08c9faec28cf3de514dd4a2abc3d9de087740a4206b2ff029e75e90048780630a47c7a535788474e70cfb7bbcee82
-  languageName: node
-  linkType: hard
-
 "@janhq/core@file:../../core/package.tgz::locator=%40janhq%2Fmlx-extension%40workspace%3Amlx-extension":
   version: 0.1.10
   resolution: "@janhq/core@file:../../core/package.tgz#../../core/package.tgz::hash=376b9c&locator=%40janhq%2Fmlx-extension%40workspace%3Amlx-extension"
@@ -474,23 +462,6 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@janhq/mistralrs-extension@workspace:mistralrs-extension":
-  version: 0.0.0-use.local
-  resolution: "@janhq/mistralrs-extension@workspace:mistralrs-extension"
-  dependencies:
-    "@janhq/core": ../../core/package.tgz
-    "@janhq/tauri-plugin-mistralrs-api": "link:../../src-tauri/plugins/tauri-plugin-mistralrs"
-    "@tauri-apps/api": "npm:2.8.0"
-    "@tauri-apps/plugin-http": "npm:2.5.0"
-    "@tauri-apps/plugin-log": "npm:^2.6.0"
-    cpx: "npm:1.5.0"
-    rimraf: "npm:3.0.2"
-    rolldown: "npm:1.0.0-beta.1"
-    typescript: "npm:5.9.2"
-    vitest: "npm:3.2.4"
-  languageName: unknown
-  linkType: soft
-
 "@janhq/mlx-extension@workspace:mlx-extension":
   version: 0.0.0-use.local
   resolution: "@janhq/mlx-extension@workspace:mlx-extension"
@@ -537,12 +508,6 @@ __metadata:
 "@janhq/tauri-plugin-llamacpp-api@link:../../src-tauri/plugins/tauri-plugin-llamacpp::locator=%40janhq%2Fmlx-extension%40workspace%3Amlx-extension":
   version: 0.0.0-use.local
   resolution: "@janhq/tauri-plugin-llamacpp-api@link:../../src-tauri/plugins/tauri-plugin-llamacpp::locator=%40janhq%2Fmlx-extension%40workspace%3Amlx-extension"
-  languageName: node
-  linkType: soft
-
-"@janhq/tauri-plugin-mistralrs-api@link:../../src-tauri/plugins/tauri-plugin-mistralrs::locator=%40janhq%2Fmistralrs-extension%40workspace%3Amistralrs-extension":
-  version: 0.0.0-use.local
-  resolution: "@janhq/tauri-plugin-mistralrs-api@link:../../src-tauri/plugins/tauri-plugin-mistralrs::locator=%40janhq%2Fmistralrs-extension%40workspace%3Amistralrs-extension"
   languageName: node
   linkType: soft
 

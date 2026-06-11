@@ -153,7 +153,7 @@ function ProviderDetail() {
   const isBackendKey = (k: string) =>
     k === 'llamacpp_version' || k === 'llamacpp_backend'
   const needsBackendConfig =
-    (provider?.provider === 'llamacpp' || provider?.provider === 'mlx' || provider?.provider === 'mistralrs') &&
+    (provider?.provider === 'llamacpp' || provider?.provider === 'mlx') &&
     provider.settings?.some(
       (setting) =>
         isBackendKey(setting.key) &&
@@ -261,7 +261,7 @@ function ProviderDetail() {
 
   useEffect(() => {
     if (!provider) return
-    if (provider.provider === 'llamacpp' || provider.provider === 'mlx' || provider.provider === 'mistralrs') return
+    if (provider.provider === 'llamacpp' || provider.provider === 'mlx') return
     setApiKeysDraft(providerRemoteApiKeyChain(provider).join('\n'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerName, provider?.api_key, JSON.stringify(provider?.api_key_fallbacks ?? [])])
@@ -692,7 +692,7 @@ function ProviderDetail() {
 
         // Capitalize provider name for display
         const providerDisplayName =
-          provider?.provider === 'llamacpp' ? 'Llamacpp' : provider?.provider === 'mlx' ? 'MLX' : 'mistral.rs'
+          provider?.provider === 'llamacpp' ? 'Llamacpp' : 'MLX'
 
         toast.success(t('settings:backendInstallSuccess'), {
           description: `${providerDisplayName} ${fileName} installed`,
@@ -766,8 +766,7 @@ function ProviderDetail() {
                 'flex flex-col gap-3',
                 provider &&
                   (provider.provider === 'llamacpp' ||
-                    provider.provider === 'mlx' ||
-                    provider.provider === 'mistralrs') &&
+                    provider.provider === 'mlx') &&
                   'flex-col-reverse'
               )}
             >
@@ -776,16 +775,14 @@ function ProviderDetail() {
               {!(
                 isPredefinedProvider &&
                 provider?.provider !== 'llamacpp' &&
-                provider?.provider !== 'mlx' &&
-                provider?.provider !== 'mistralrs'
+                provider?.provider !== 'mlx'
               ) && (
               <Card>
                 {provider?.settings.map((setting, settingIndex) => {
                   if (
                     setting.key === 'api-key' &&
                     provider?.provider !== 'llamacpp' &&
-                    provider?.provider !== 'mlx' &&
-                    provider?.provider !== 'mistralrs'
+                    provider?.provider !== 'mlx'
                   ) {
                     return null
                   }
@@ -933,8 +930,7 @@ function ProviderDetail() {
                             )}
                           {setting.key === 'llamacpp_backend' &&
                             (provider?.provider === 'llamacpp' ||
-                              provider?.provider === 'mlx' ||
-                              provider?.provider === 'mistralrs') && (
+                              provider?.provider === 'mlx') && (
                               <div className="mt-2 flex flex-wrap gap-2">
                                 <Button
                                   variant="outline"
@@ -1197,11 +1193,10 @@ function ProviderDetail() {
                       )}
                       {provider &&
                         (provider.provider === 'llamacpp' ||
-                          provider.provider === 'mlx' ||
-                          provider.provider === 'mistralrs') && (
+                          provider.provider === 'mlx') && (
                           <DialogDeleteAllModels provider={provider} />
                         )}
-                      {provider && (provider.provider === 'llamacpp' || provider.provider === 'mistralrs') && (
+                      {provider && provider.provider === 'llamacpp' && (
                         <ImportLlamacppModelDialog
                           provider={provider}
                           onSuccess={handleModelImportSuccess}
@@ -1305,8 +1300,7 @@ function ProviderDetail() {
                             />
                             {provider &&
                               (provider.provider === 'llamacpp' ||
-                                provider.provider === 'mlx' ||
-                                provider.provider === 'mistralrs') && (
+                                provider.provider === 'mlx') && (
                                 <div className="ml-2">
                                   {activeModels.some(
                                     (activeModel) => activeModel === model.id
