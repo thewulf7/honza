@@ -115,6 +115,13 @@ const MLX: ProviderCaps = {
   maybe: new Set(),
 }
 
+// Verified against mistralrs-server-core v0.8 ChatCompletionRequest:
+// temperature/top_p/top_k/min_p/penalties/dry_*/grammar/response_format.
+const MISTRALRS: ProviderCaps = {
+  supported: set('top_k', 'min_p', 'penalties', 'dry', 'grammar', 'json_schema'),
+  maybe: new Set(),
+}
+
 /**
  * Custom user-added providers default to permissive — the user explicitly
  * pointed at an OpenAI-compatible endpoint of unknown shape, so showing all
@@ -155,6 +162,7 @@ const BUILTIN_CAPS: Record<string, ProviderCaps> = {
   minimax: MINIMAX,
   llamacpp: LLAMACPP,
   mlx: MLX,
+  mistralrs: MISTRALRS,
 }
 
 export function resolveProviderCaps(
@@ -176,7 +184,7 @@ export function getProviderApiType(
   return provider.provider === 'anthropic' ? 'anthropic' : 'openai'
 }
 
-const LOCAL_PROVIDER_IDS = new Set<string>(['llamacpp', 'mlx'])
+const LOCAL_PROVIDER_IDS = new Set<string>(['llamacpp', 'mlx', 'mistralrs'])
 
 /**
  * Predefined remote providers ship locked base_urls and expose only a fixed

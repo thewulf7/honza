@@ -347,9 +347,14 @@ export class DefaultModelsService implements ModelsService {
   async abortDownload(id: string): Promise<void> {
     const llamacppEngine = this.getEngine('llamacpp')
     const mlxEngine = this.getEngine('mlx')
+    const mistralrsEngine = this.getEngine('mistralrs')
     try {
       await Promise.allSettled(
-        [llamacppEngine?.abortImport(id), mlxEngine?.abortImport(id)].filter(
+        [
+          llamacppEngine?.abortImport(id),
+          mlxEngine?.abortImport(id),
+          mistralrsEngine?.abortImport(id),
+        ].filter(
           Boolean
         )
       )
@@ -364,10 +369,15 @@ export class DefaultModelsService implements ModelsService {
   async pauseDownload(id: string): Promise<void> {
     const llamacppEngine = this.getEngine('llamacpp')
     const mlxEngine = this.getEngine('mlx')
+    const mistralrsEngine = this.getEngine('mistralrs')
     // No stopped event here: the backend cancel surfaces via the import path,
     // and the UI keeps the entry visible as paused for resume.
     await Promise.allSettled(
-      [llamacppEngine?.pauseImport(id), mlxEngine?.pauseImport(id)].filter(
+      [
+        llamacppEngine?.pauseImport(id),
+        mlxEngine?.pauseImport(id),
+        mistralrsEngine?.pauseImport(id),
+      ].filter(
         Boolean
       )
     )
@@ -397,6 +407,11 @@ export class DefaultModelsService implements ModelsService {
     const mlxModels = await this.getActiveModels('mlx')
     if (mlxModels)
       await Promise.all(mlxModels.map((model) => this.stopModel(model, 'mlx')))
+    const mistralrsModels = await this.getActiveModels('mistralrs')
+    if (mistralrsModels)
+      await Promise.all(
+        mistralrsModels.map((model) => this.stopModel(model, 'mistralrs'))
+      )
   }
 
   async startModel(
@@ -726,7 +741,7 @@ export class DefaultModelsService implements ModelsService {
           model_name: string
           developer?: string
           model_path: string
-          runtime?: 'llamacpp' | 'mlx'
+          runtime?: 'llamacpp' | 'mlx' | 'mistralrs'
           quantization?: string
           total_size_bytes?: number
           ctx_size?: number

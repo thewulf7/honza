@@ -1,0 +1,296 @@
+[
+  {
+    "key": "version_backend",
+    "title": "Engine Version & Backend",
+    "description": "mistralrs-server build to use, as <release>/<variant>. Versions are fetched from the configured GitHub repository and downloaded on demand.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "",
+      "options": [],
+      "recommended": ""
+    }
+  },
+  {
+    "key": "auto_update_engine",
+    "title": "Auto-Update Engine",
+    "description": "Automatically download and switch to the newest release of the currently selected backend variant on startup.",
+    "controllerType": "checkbox",
+    "controllerProps": { "value": true }
+  },
+  {
+    "key": "release_repo",
+    "title": "Release Repository",
+    "description": "GitHub repository (owner/repo) whose releases provide mistralrs-server binaries. Leave empty for the default.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": "",
+      "placeholder": "owner/repo (default)",
+      "type": "text",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "ctx_size",
+    "title": "Context Size",
+    "description": "Maximum tokens in the context window (maps to max_seq_len). Larger values use more memory.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 4096,
+      "placeholder": "4096",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "dtype",
+    "title": "Model Data Type",
+    "description": "Precision for model weights. 'Auto' picks the best type for your hardware. BF16 is recommended on Apple Silicon and Ampere+ GPUs; F16 on older GPUs.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "auto",
+      "options": [
+        { "name": "Auto (recommended)", "value": "auto" },
+        { "name": "BFloat16 (BF16)", "value": "bf16" },
+        { "name": "Float16 (FP16)", "value": "f16" },
+        { "name": "Float32 (FP32, highest memory use)", "value": "f32" }
+      ]
+    }
+  },
+  {
+    "key": "max_seqs",
+    "title": "Max Concurrent Sequences",
+    "description": "Maximum sequences processed simultaneously by the scheduler. Increase for higher throughput when serving multiple clients.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 16,
+      "placeholder": "16",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "max_batch_size",
+    "title": "Max Prompt Batch Size",
+    "description": "Maximum prompt batch size used for automatic device mapping. 0 uses the server default.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 0,
+      "placeholder": "0 (server default)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "num_device_layers",
+    "title": "GPU Layers",
+    "description": "Number of model layers to offload to GPU/Metal. Leave empty for automatic mapping. Use a single number (e.g. '20') for one GPU, or 'ORD:NUM;...' for multiple GPUs (e.g. '0:20;1:16').",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": "",
+      "placeholder": "auto",
+      "type": "text",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "in_situ_quant",
+    "title": "In-Situ Quantization (ISQ)",
+    "description": "Quantize model weights after loading to reduce VRAM. Primarily useful for non-GGUF (safetensors) models; GGUF files are already quantized.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "none",
+      "options": [
+        { "name": "None", "value": "none" },
+        { "name": "Q4K — 4-bit (good quality)", "value": "q4k" },
+        { "name": "Q5K — 5-bit (better quality)", "value": "q5k" },
+        { "name": "Q6K — 6-bit (high quality)", "value": "q6k" },
+        { "name": "Q8K — 8-bit (near lossless)", "value": "q8k" },
+        { "name": "Q4_0 — legacy 4-bit", "value": "q4_0" },
+        { "name": "Q8_0 — legacy 8-bit", "value": "q8_0" },
+        { "name": "HQQ4 — 4-bit high quality", "value": "hqq4" },
+        { "name": "HQQ8 — 8-bit high quality", "value": "hqq8" },
+        { "name": "FP8 — 8-bit float (requires CUDA)", "value": "fp8" }
+      ]
+    }
+  },
+  {
+    "key": "tok_model_id",
+    "title": "Tokenizer Model ID",
+    "description": "HuggingFace model ID to load the tokenizer from (e.g. 'meta-llama/Meta-Llama-3-8B'). Leave empty to use the tokenizer embedded in the GGUF file.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": "",
+      "placeholder": "e.g. meta-llama/Meta-Llama-3-8B",
+      "type": "text",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "prefix_cache_n",
+    "title": "Prefix Cache Size",
+    "description": "On-device KV-cache slots reserved for prompt prefixes. Repeated identical prefixes skip re-computation. Higher values improve speed but use more VRAM.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 16,
+      "placeholder": "16",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "seed",
+    "title": "Seed",
+    "description": "RNG seed for reproducible generation. Set to -1 for a random seed.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": -1,
+      "placeholder": "-1 (random)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "no_kv_cache",
+    "title": "Disable KV Cache",
+    "description": "Disabling the KV cache can reduce peak memory usage but will significantly slow down multi-turn conversations.",
+    "controllerType": "checkbox",
+    "controllerProps": { "value": false }
+  },
+  {
+    "key": "force_cpu",
+    "title": "Force CPU Inference",
+    "description": "Run inference on CPU only, disabling GPU/Metal acceleration. Useful for debugging or on machines without a supported GPU.",
+    "controllerType": "checkbox",
+    "controllerProps": { "value": false }
+  },
+  {
+    "key": "paged_attn",
+    "title": "Enable PagedAttention (Metal)",
+    "description": "Enable PagedAttention on Metal. PagedAttention is enabled by default on CUDA, so this only affects macOS.",
+    "controllerType": "checkbox",
+    "controllerProps": { "value": false }
+  },
+  {
+    "key": "no_paged_attn",
+    "title": "Disable PagedAttention (CUDA)",
+    "description": "Disable PagedAttention on CUDA GPUs. Try this if you hit allocation errors with large KV caches.",
+    "controllerType": "checkbox",
+    "controllerProps": { "value": false }
+  },
+  {
+    "key": "paged_attn_gpu_mem",
+    "title": "PagedAttention GPU Memory (MB)",
+    "description": "GPU memory reserved for the PagedAttention KV cache in megabytes. 0 lets the server decide.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 0,
+      "placeholder": "0 (auto)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "paged_attn_gpu_mem_usage",
+    "title": "PagedAttention GPU Memory Fraction",
+    "description": "Fraction (0–1] of free GPU memory to use for the PagedAttention KV cache. 0 lets the server decide.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 0,
+      "placeholder": "0 (auto)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "paged_ctxt_len",
+    "title": "PagedAttention Context Length",
+    "description": "Total context length the PagedAttention KV cache is sized for. 0 lets the server decide.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 0,
+      "placeholder": "0 (auto)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "paged_attn_block_size",
+    "title": "PagedAttention Block Size",
+    "description": "PagedAttention KV cache block size. 0 uses the server default (32).",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 0,
+      "placeholder": "0 (default)",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "paged_cache_type",
+    "title": "PagedAttention Cache Type",
+    "description": "KV cache element type for PagedAttention. F8E4M3 halves KV cache memory at slight quality cost.",
+    "controllerType": "dropdown",
+    "controllerProps": {
+      "value": "auto",
+      "options": [
+        { "name": "Auto", "value": "auto" },
+        { "name": "FP8 (F8E4M3)", "value": "f8e4m3" }
+      ]
+    }
+  },
+  {
+    "key": "chat_template",
+    "title": "Chat Template File",
+    "description": "Path to a JINJA chat template file (or JSON with a chat_template key). Leave empty to use the model's own template.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": "",
+      "placeholder": "path/to/template.jinja",
+      "type": "text",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "jinja_explicit",
+    "title": "Explicit JINJA Template",
+    "description": "Path to an explicit JINJA chat template file taking precedence over everything else.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": "",
+      "placeholder": "path/to/template.jinja",
+      "type": "text",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "token_source",
+    "title": "HuggingFace Token Source",
+    "description": "Where to read the HuggingFace token from when fetching tokenizers: 'cache', 'env:VAR', 'path:file', 'literal:token' or 'none'. Leave empty for the default (cache).",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": "",
+      "placeholder": "cache",
+      "type": "text",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "timeout",
+    "title": "Timeout",
+    "description": "Model load and inference timeout in seconds.",
+    "controllerType": "input",
+    "controllerProps": {
+      "value": 600,
+      "placeholder": "600",
+      "type": "number",
+      "textAlign": "right"
+    }
+  },
+  {
+    "key": "auto_unload",
+    "title": "Auto Unload Model",
+    "description": "Automatically unload other models when loading a new one.",
+    "controllerType": "checkbox",
+    "controllerProps": { "value": true }
+  }
+]

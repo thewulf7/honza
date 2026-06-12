@@ -76,6 +76,7 @@ mod server_tests {
             host: "localhost".to_string(),
             port: 1337,
             enable_server_tool_execution: false,
+            preferred_local_provider: None,
         };
         assert_eq!(config.prefix, "/v1");
         assert_eq!(config.proxy_api_key, "test-key");
@@ -93,6 +94,7 @@ mod server_tests {
             host: "127.0.0.1".to_string(),
             port: 8080,
             enable_server_tool_execution: false,
+            preferred_local_provider: None,
         };
         assert_eq!(config.prefix, "");
         assert_eq!(config.proxy_api_key, "");
@@ -1625,6 +1627,7 @@ mod server_tests {
             host: "h".to_string(),
             port: 1,
             enable_server_tool_execution: true,
+            preferred_local_provider: None,
         };
         let cloned = cfg.clone();
         assert_eq!(cloned.prefix, "/p");

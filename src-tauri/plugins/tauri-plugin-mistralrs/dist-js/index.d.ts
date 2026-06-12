@@ -1,0 +1,11 @@
+import { SessionInfo, UnloadResult, MistralrsConfig } from './types';
+export { SessionInfo, UnloadResult, MistralrsConfig } from './types';
+export declare function normalizeMistralrsConfig(config: any): MistralrsConfig;
+export declare function loadMistralrsModel(backendPath: string, modelId: string, modelPath: string, port: number, cfg: MistralrsConfig, envs: Record<string, string>, isEmbedding?: boolean, timeout?: number): Promise<SessionInfo>;
+export declare function unloadMistralrsModel(pid: number): Promise<UnloadResult>;
+export declare function isMistralrsProcessRunning(pid: number): Promise<boolean>;
+export declare function getMistralrsRandomPort(): Promise<number>;
+export declare function findMistralrsSessionByModel(modelId: string): Promise<SessionInfo | null>;
+export declare function getMistralrsLoadedModels(): Promise<string[]>;
+export declare function getMistralrsAllSessions(): Promise<SessionInfo[]>;
+export declare function cleanupMistralrsProcesses(): Promise<void>;

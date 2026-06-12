@@ -149,11 +149,15 @@ function ProviderDetail() {
     clearDefaultEmbeddingModel,
   ])
 
-  // Check if llamacpp/mlx provider needs backend configuration
+  // Check if a local engine provider needs backend configuration
   const isBackendKey = (k: string) =>
-    k === 'llamacpp_version' || k === 'llamacpp_backend'
+    k === 'llamacpp_version' ||
+    k === 'llamacpp_backend' ||
+    k === 'version_backend'
   const needsBackendConfig =
-    (provider?.provider === 'llamacpp' || provider?.provider === 'mlx') &&
+    (provider?.provider === 'llamacpp' ||
+      provider?.provider === 'mlx' ||
+      provider?.provider === 'mistralrs') &&
     provider.settings?.some(
       (setting) =>
         isBackendKey(setting.key) &&
@@ -261,7 +265,12 @@ function ProviderDetail() {
 
   useEffect(() => {
     if (!provider) return
-    if (provider.provider === 'llamacpp' || provider.provider === 'mlx') return
+    if (
+      provider.provider === 'llamacpp' ||
+      provider.provider === 'mlx' ||
+      provider.provider === 'mistralrs'
+    )
+      return
     setApiKeysDraft(providerRemoteApiKeyChain(provider).join('\n'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerName, provider?.api_key, JSON.stringify(provider?.api_key_fallbacks ?? [])])
@@ -635,12 +644,16 @@ function ProviderDetail() {
   }
 
   const handleCheckForBackendUpdate = useCallback(async () => {
-    if (provider?.provider !== 'llamacpp' && provider?.provider !== 'mlx')
+    if (
+      provider?.provider !== 'llamacpp' &&
+      provider?.provider !== 'mlx' &&
+      provider?.provider !== 'mistralrs'
+    )
       return
 
     setIsCheckingBackendUpdate(true)
     try {
-      const update = await checkForBackendUpdate(true)
+      const update = await checkForBackendUpdate(true, provider.provider)
       if (!update) {
         toast.info(t('settings:noBackendUpdateAvailable'))
       }
@@ -654,7 +667,11 @@ function ProviderDetail() {
   }, [provider, checkForBackendUpdate, t])
 
   const handleInstallBackendFromFile = useCallback(async () => {
-    if (provider?.provider !== 'llamacpp' && provider?.provider !== 'mlx')
+    if (
+      provider?.provider !== 'llamacpp' &&
+      provider?.provider !== 'mlx' &&
+      provider?.provider !== 'mistralrs'
+    )
       return
 
     setIsInstallingBackend(true)
@@ -685,14 +702,18 @@ function ProviderDetail() {
         // Process the file path: replace spaces with dashes and convert to lowercase
 
         // Install the backend using the llamacpp extension
-        await installBackend(selectedFile)
+        await installBackend(selectedFile, provider.provider)
 
         // Extract filename from the selected file path and replace spaces with dashes
         const fileName = basenameNoExt(selectedFile).replace(/\s+/g, '-')
 
         // Capitalize provider name for display
         const providerDisplayName =
-          provider?.provider === 'llamacpp' ? 'Llamacpp' : 'MLX'
+          provider?.provider === 'llamacpp'
+            ? 'Llamacpp'
+            : provider?.provider === 'mlx'
+              ? 'MLX'
+              : 'mistral.rs'
 
         toast.success(t('settings:backendInstallSuccess'), {
           description: `${providerDisplayName} ${fileName} installed`,
@@ -766,7 +787,8 @@ function ProviderDetail() {
                 'flex flex-col gap-3',
                 provider &&
                   (provider.provider === 'llamacpp' ||
-                    provider.provider === 'mlx') &&
+                    provider.provider === 'mlx' ||
+                    provider.provider === 'mistralrs') &&
                   'flex-col-reverse'
               )}
             >
@@ -775,14 +797,16 @@ function ProviderDetail() {
               {!(
                 isPredefinedProvider &&
                 provider?.provider !== 'llamacpp' &&
-                provider?.provider !== 'mlx'
+                provider?.provider !== 'mlx' &&
+                provider?.provider !== 'mistralrs'
               ) && (
               <Card>
                 {provider?.settings.map((setting, settingIndex) => {
                   if (
                     setting.key === 'api-key' &&
                     provider?.provider !== 'llamacpp' &&
-                    provider?.provider !== 'mlx'
+                    provider?.provider !== 'mlx' &&
+                    provider?.provider !== 'mistralrs'
                   ) {
                     return null
                   }
@@ -928,9 +952,11 @@ function ProviderDetail() {
                                 <span> is the recommended backend.</span>
                               </div>
                             )}
-                          {setting.key === 'llamacpp_backend' &&
+                          {(setting.key === 'llamacpp_backend' ||
+                            setting.key === 'version_backend') &&
                             (provider?.provider === 'llamacpp' ||
-                              provider?.provider === 'mlx') && (
+                              provider?.provider === 'mlx' ||
+                              provider?.provider === 'mistralrs') && (
                               <div className="mt-2 flex flex-wrap gap-2">
                                 <Button
                                   variant="outline"
@@ -988,7 +1014,8 @@ function ProviderDetail() {
 
               {provider &&
                 provider.provider !== 'llamacpp' &&
-                provider.provider !== 'mlx' && (
+                provider.provider !== 'mlx' &&
+                provider.provider !== 'mistralrs' && (
                   <Card>
                     <div className="space-y-2">
                       <div className="space-y-1">
@@ -1168,7 +1195,10 @@ function ProviderDetail() {
                       {t('providers:models')}
                     </h1>
                     <div className="flex items-center gap-2">
-                      {provider && provider.provider !== 'llamacpp' && provider.provider !== 'mlx' && (
+                      {provider &&
+                        provider.provider !== 'llamacpp' &&
+                        provider.provider !== 'mlx' &&
+                        provider.provider !== 'mistralrs' && (
                         <>
                           <Button
                             variant="secondary"
@@ -1193,10 +1223,13 @@ function ProviderDetail() {
                       )}
                       {provider &&
                         (provider.provider === 'llamacpp' ||
-                          provider.provider === 'mlx') && (
+                          provider.provider === 'mlx' ||
+                          provider.provider === 'mistralrs') && (
                           <DialogDeleteAllModels provider={provider} />
                         )}
-                      {provider && provider.provider === 'llamacpp' && (
+                      {provider &&
+                        (provider.provider === 'llamacpp' ||
+                          provider.provider === 'mistralrs') && (
                         <ImportLlamacppModelDialog
                           provider={provider}
                           onSuccess={handleModelImportSuccess}
@@ -1300,7 +1333,8 @@ function ProviderDetail() {
                             />
                             {provider &&
                               (provider.provider === 'llamacpp' ||
-                                provider.provider === 'mlx') && (
+                                provider.provider === 'mlx' ||
+                                provider.provider === 'mistralrs') && (
                                 <div className="ml-2">
                                   {activeModels.some(
                                     (activeModel) => activeModel === model.id

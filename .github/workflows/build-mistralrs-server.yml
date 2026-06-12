@@ -1,0 +1,132 @@
+name: Build mistralrs-server binaries
+
+# Builds mistralrs-server from the upstream mistral.rs repo and publishes the
+# archives as a GitHub release of THIS repository. The mistral.rs Jan
+# extension discovers these releases (assets named
+# `mistralrs-server-<os>-<variant>-<arch>.tar.gz`) through the GitHub API and
+# lets the user download/switch versions from the UI.
+#
+# Trigger manually: Actions → "Build mistralrs-server binaries" → Run workflow
+# with the upstream tag to build (e.g. v0.8.3).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mistralrs_ref:
+        description: 'mistral.rs git tag or ref to build (e.g. v0.8.3)'
+        required: true
+        default: 'v0.8.3'
+      mistralrs_repo:
+        description: 'Upstream repository to build from'
+        required: true
+        default: 'EricLBuehler/mistral.rs'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: windows-cuda-x64
+            os: windows-2022
+            features: cuda
+            cuda: '12.4.1'
+          - backend: windows-cpu-x64
+            os: windows-2022
+            features: ''
+            cuda: ''
+          - backend: linux-cuda-x64
+            os: ubuntu-22.04
+            features: cuda
+            cuda: '12.4.1'
+          - backend: linux-cpu-x64
+            os: ubuntu-22.04
+            features: ''
+            cuda: ''
+          - backend: macos-metal-arm64
+            os: macos-14
+            features: metal
+            cuda: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    env:
+      # candle compiles CUDA kernels for this compute capability when no GPU
+      # is present on the build machine. 75 (Turing) keeps support broad;
+      # newer architectures run the PTX through JIT.
+      CUDA_COMPUTE_CAP: '75'
+    steps:
+      - name: Checkout mistral.rs
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.mistralrs_repo }}
+          ref: ${{ github.event.inputs.mistralrs_ref }}
+
+      - name: Install CUDA toolkit
+        if: matrix.cuda != ''
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: ${{ matrix.cuda }}
+          method: network
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.backend }}
+
+      - name: Build mistralrs-server
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo build --release --package mistralrs-server --features "${{ matrix.features }}"
+          else
+            cargo build --release --package mistralrs-server
+          fi
+
+      - name: Package archive
+        shell: bash
+        run: |
+          mkdir -p staging
+          if [[ "${{ matrix.backend }}" == windows-* ]]; then
+            cp target/release/mistralrs-server.exe staging/
+            # Bundle CUDA runtime DLLs so users don't need the CUDA toolkit.
+            if [[ -n "${{ matrix.cuda }}" && -n "$CUDA_PATH" ]]; then
+              cp "$CUDA_PATH"/bin/cudart64_*.dll staging/ || true
+              cp "$CUDA_PATH"/bin/cublas64_*.dll staging/ || true
+              cp "$CUDA_PATH"/bin/cublasLt64_*.dll staging/ || true
+              cp "$CUDA_PATH"/bin/curand64_*.dll staging/ || true
+            fi
+          else
+            cp target/release/mistralrs-server staging/
+          fi
+          tar -czf "mistralrs-server-${{ matrix.backend }}.tar.gz" -C staging .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mistralrs-server-${{ matrix.backend }}
+          path: mistralrs-server-${{ matrix.backend }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mistralrs-${{ github.event.inputs.mistralrs_ref }}
+          name: mistralrs-server ${{ github.event.inputs.mistralrs_ref }}
+          body: |
+            Prebuilt `mistralrs-server` binaries from
+            ${{ github.event.inputs.mistralrs_repo }}@${{ github.event.inputs.mistralrs_ref }}
+            for the Jan mistral.rs inference extension.
+          files: artifacts/*.tar.gz

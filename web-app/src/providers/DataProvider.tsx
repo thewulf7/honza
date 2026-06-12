@@ -34,9 +34,11 @@ type RegisterProviderRequest = {
   models: string[]
 }
 
+const LOCAL_ENGINE_PROVIDERS = new Set(['llamacpp', 'mlx', 'mistralrs'])
+
 async function registerRemoteProvider(provider: ModelProvider) {
-  // Skip llamacpp - those are local models
-  if (provider.provider === 'llamacpp') return
+  // Skip local engines - their models are served by the proxy directly
+  if (LOCAL_ENGINE_PROVIDERS.has(provider.provider)) return
 
   const chain = providerRemoteApiKeyChain(provider)
   if (chain.length === 0) {
@@ -75,7 +77,7 @@ const syncRemoteProviders = () => {
   providers.forEach((provider) => {
     if (
       provider.active &&
-      provider.provider !== 'llamacpp' &&
+      !LOCAL_ENGINE_PROVIDERS.has(provider.provider) &&
       providerHasRemoteApiKeys(provider)
     ) {
       registerRemoteProvider(provider)

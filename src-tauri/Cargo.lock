@@ -51,6 +51,7 @@ dependencies = [
  "tauri-plugin-http",
  "tauri-plugin-llamacpp",
  "tauri-plugin-log",
+ "tauri-plugin-mistralrs",
  "tauri-plugin-mlx",
  "tauri-plugin-opener",
  "tauri-plugin-os",
@@ -6736,6 +6737,23 @@ dependencies = [
  "tauri-plugin",
  "thiserror 2.0.17",
  "time",
+]
+
+[[package]]
+name = "tauri-plugin-mistralrs"
+version = "1.0.0"
+dependencies = [
+ "jan-utils",
+ "log",
+ "nix",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "sysinfo 0.34.2",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.17",
+ "tokio",
 ]
 
 [[package]]

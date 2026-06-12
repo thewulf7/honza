@@ -233,6 +233,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_llamacpp::init())
+        .plugin(tauri_plugin_mistralrs::init())
         .plugin(tauri_plugin_vector_db::init())
         .plugin(tauri_plugin_rag::init());
 
@@ -465,6 +466,15 @@ pub fn run() {
                             log::warn!("Failed to cleanup MLX processes: {}", e);
                         } else {
                             log::info!("MLX processes cleaned up successfully");
+                        }
+                    }
+
+                    {
+                        use tauri_plugin_mistralrs::cleanup_mistralrs_processes;
+                        if let Err(e) = cleanup_mistralrs_processes(app_handle.clone()).await {
+                            log::warn!("Failed to cleanup mistral.rs processes: {}", e);
+                        } else {
+                            log::info!("mistral.rs processes cleaned up successfully");
                         }
                     }
 
